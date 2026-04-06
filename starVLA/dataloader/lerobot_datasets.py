@@ -1,7 +1,7 @@
 # Copyright 2025 NVIDIA Corp. and affiliates. All rights reserved.
-# Modified by [Fangjing Wang/ SUST University] in [2025]. 
+# Modified by [Fangjing Wang/ SUST University] in [2025].
 # Modification: [return raw data and suport multi-dataset mixture].
-# Modified by [Jinhui YE/ HKUST University] in [2025]. 
+# Modified by [Jinhui YE/ HKUST University] in [2025].
 # Modification: [suport topdowm processing, suport param from config].
 
 from pathlib import Path
@@ -32,7 +32,7 @@ def make_LeRobotSingleDataset(
     :param crop_obs_camera: Whether to crop the observation camera images.
     :return: A LeRobotSingleDataset object.
     """
-    
+
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
     modality_config = data_config.modality_config()
     transforms = data_config.transform()
@@ -42,7 +42,7 @@ def make_LeRobotSingleDataset(
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
     else:
         embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
-    
+
     video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
     return LeRobotSingleDataset(
         dataset_path=dataset_path,
@@ -70,8 +70,8 @@ def get_vla_dataset(
     delete_pause_frame = data_cfg.get("delete_pause_frame", False)
     mixture_spec = DATASET_NAMED_MIXTURES[data_mix]
     included_datasets, filtered_mixture_spec = set(), []
-    for d_name, d_weight, robot_type in mixture_spec:  
-        dataset_key = (d_name, robot_type)  
+    for d_name, d_weight, robot_type in mixture_spec:
+        dataset_key = (d_name, robot_type)
         if dataset_key in included_datasets:
             print(f"Skipping Duplicate Dataset: `{(d_name, d_weight, robot_type)}`")
             continue
@@ -100,13 +100,13 @@ if __name__ == "__main__":
     # import debugpy
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_yaml", type=str, default="./starVLA/config/training/starvla_cotrain_behavior.yaml", help="Path to YAML config")
+    parser.add_argument("--config_yaml", type=str, default="./starVLA/config/training/starvla_cotrain_oxe.yaml", help="Path to YAML config")
     args, clipargs = parser.parse_known_args()
 
     # debugpy.listen(("0.0.0.0", 10092))
     # print("🔍 Rank 0 waiting for debugger attach on port 10092...")
     # debugpy.wait_for_client()
-    args.config_yaml = "./examples/MultiRobot/train_files/starvla_cotrain_multiRobot.yaml"
+    args.config_yaml = "./examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml"
     cfg = OmegaConf.load(args.config_yaml)
     # cfg.datasets.vla_data.data_mix = "robotwin"
     vla_dataset_cfg = cfg.datasets.vla_data
