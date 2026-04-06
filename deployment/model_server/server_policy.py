@@ -2,6 +2,9 @@
 # Licensed under the MIT License, Version 1.0 (the "License"); 
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
+import faulthandler
+faulthandler.enable()  # Dump traceback on segfault / SIGABRT
+
 import logging
 import socket
 import argparse

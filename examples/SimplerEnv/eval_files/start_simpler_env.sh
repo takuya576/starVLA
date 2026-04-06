@@ -2,8 +2,8 @@
 
 echo `which python`
 
-export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
-export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
+export sim_python=$(which python)
+export SimplerEnv_PATH=~/SimplerEnv
 export PYTHONPATH=$(pwd):${PYTHONPATH}
 #### set environment variables #####
 
@@ -11,7 +11,7 @@ export PYTHONPATH=$(pwd):${PYTHONPATH}
 if [ -n "$1" ]; then
   MODEL_PATH="$1" # model path indict the output tree
 else
-  MODEL_PATH=./results/Checkpoints/1208_bridge_rt_1_Qwen3PI/final_model/pytorch_model.pt
+  MODEL_PATH=results/Checkpoints/bridge_rt_1_qwen3_2b_gr00t/final_model/bridge_rt_1_qwen3_2b_gr00t.pt
 fi
 
 port=${2:-6678} # connect to your policy server port
@@ -34,7 +34,7 @@ TSET_NUM=1
 # export DEBUG=1
 
 IFS=',' read -r -a CUDA_DEVICES <<< "$CUDA_VISIBLE_DEVICES"
-NUM_GPUS=${#CUDA_DEVICES[@]} 
+NUM_GPUS=${#CUDA_DEVICES[@]}
 
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "CUDA_DEVICES: ${CUDA_DEVICES[@]}"
@@ -47,9 +47,9 @@ robot_init_x=0.147
 robot_init_y=0.028
 
 declare -a ENV_NAMES=(
-  # StackGreenCubeOnYellowCubeBakedTexInScene-v0
-  # PutCarrotOnPlateInScene-v0
-  # PutSpoonOnTableClothInScene-v0
+  StackGreenCubeOnYellowCubeBakedTexInScene-v0
+  PutCarrotOnPlateInScene-v0
+  PutSpoonOnTableClothInScene-v0
 )
 
 for i in "${!ENV_NAMES[@]}"; do

@@ -2,24 +2,24 @@
 
 echo `which python`
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/starVLA
+cd /home/takuya/starVLA
 export star_vla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starVLA/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
 export PYTHONPATH=$(pwd):${PYTHONPATH}
-base_port=6350 
+base_port=6350
 
 # export DEBUG=1
 
 
 MODEL_PATH=$1
-# MODEL_PATH=/mnt/petrelfs/yejinhui/Projects/starVLA/results/Checkpoints/1120_bridge_rt_1_QwenDual_florence/checkpoints/steps_11000_pytorch_model.pt
+# MODEL_PATH=/home/takuya/starVLA/results/Checkpoints/1120_bridge_rt_1_QwenDual_florence/checkpoints/steps_11000_pytorch_model.pt
 TSET_NUM=4 # repeat each task 4 times
 run_count=0
 
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/starVLA/results/Checkpoints/1007_qwenLargefm/checkpoints/steps_20000_pytorch_model.pt"
+  export MODEL_PATH="/home/takuya/starVLA/results/Checkpoints/1007_qwenLargefm/checkpoints/steps_20000_pytorch_model.pt"
 fi
 
 ckpt_path=${MODEL_PATH}
@@ -56,7 +56,7 @@ start_service() {
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # capture PID immediately
   policyserver_pids+=($pid)
   sleep 10
@@ -126,7 +126,7 @@ for i in "${!ENV_NAMES[@]}"; do
   env="${ENV_NAMES[i]}"
   for ((run_idx=1; run_idx<=TSET_NUM; run_idx++)); do
     gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}
-    
+
     ckpt_dir=$(dirname "${ckpt_path}")
     ckpt_base=$(basename "${ckpt_path}")
     ckpt_name="${ckpt_base%.*}"  # strip .pt or .bin suffix
@@ -135,12 +135,12 @@ for i in "${!ENV_NAMES[@]}"; do
     task_log="${ckpt_dir}/${ckpt_name}_infer_${env}.log.${tag}"
 
     echo "▶️ Launching task [${env}] run#${run_idx} on GPU $gpu_id, log → ${task_log}"
-    
+
     # Launch service and capture the process ID
     port=$((base_port + run_count))
     start_service ${gpu_id} ${ckpt_path} ${port}
 
-    
+
     CUDA_VISIBLE_DEVICES=${gpu_id} ${sim_python} examples/SimplerEnv/eval_files/start_simpler_env.py \
       --port $port \
       --ckpt-path ${ckpt_path} \
@@ -159,7 +159,7 @@ for i in "${!ENV_NAMES[@]}"; do
       --robot-init-rot-quat-center 0 0 0 1 \
       --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       > "${task_log}" 2>&1 &
-    
+
     eval_pids+=($!)
     run_count=$((run_count + 1))
   done
@@ -214,10 +214,10 @@ for i in "${!ENV_NAMES_V2[@]}"; do
       --robot-init-rot-quat-center 0 0 0 1 \
       --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       2>&1 | tee "${task_log}" &
-    
+
     eval_pids+=($!)
     echo "sim end run#${run_idx}"
-    
+
     run_count=$((run_count + 1))
   done
 done

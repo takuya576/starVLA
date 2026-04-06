@@ -2,7 +2,7 @@
 # This results in 12 executions of main_inference.py.
 
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /home/takuya/llavavla
 export starvla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starvlaSAM/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
@@ -14,7 +14,7 @@ MODEL_PATH=$1
 # Optional: allow overriding via argument
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
+  export MODEL_PATH="/home/takuya/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
 fi
 
 export ckpt_path=${MODEL_PATH}
@@ -34,14 +34,14 @@ start_service() {
   local server_log_dir="$(dirname "${ckpt_path}")/server_logs"
   local svc_log="${server_log_dir}/$(basename "${ckpt_path%.*}")_${task_name}_${port}.log"
   mkdir -p "${server_log_dir}"
-  
+
   echo "▶️ Starting service on GPU ${gpu_id}, port ${port}"
   CUDA_VISIBLE_DEVICES=${gpu_id} ${starvla_python} deployment/model_server/server_policy.py \
     --ckpt_path ${ckpt_path} \
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # capture PID immediately
   policyserver_pids+=($pid)
   sleep 20
@@ -150,7 +150,7 @@ for urdf_version in "${urdf_version_arr[@]}"; do
   for ckpt_path in "${ckpt_paths[@]}"; do
     for env_name in "${env_names[@]}"; do
   gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}  # map to GPU ID in CUDA_VISIBLE_DEVICES
-      
+
       EvalOverlay &
       eval_pids+=($!)
       run_count=$((run_count + 1))

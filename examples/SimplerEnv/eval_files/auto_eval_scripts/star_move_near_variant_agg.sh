@@ -1,5 +1,5 @@
 # Define environment
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /home/takuya/llavavla
 export starvla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starvlaSAM/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
@@ -11,7 +11,7 @@ MODEL_PATH=$1
 # Optional: check whether MODEL_PATH argument is provided
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument, using default value"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
+  export MODEL_PATH="/home/takuya/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
 fi
 
 export ckpt_path=${MODEL_PATH}
@@ -31,14 +31,14 @@ start_service() {
   local server_log_dir="$(dirname "${ckpt_path}")/server_logs"
   local svc_log="${server_log_dir}/$(basename "${ckpt_path%.*}")_${task_name}_${port}.log"
   mkdir -p "${server_log_dir}"
-  
+
   echo "▶️ Starting service on GPU ${gpu_id}, port ${port}"
   CUDA_VISIBLE_DEVICES=${gpu_id} ${starvla_python} deployment/model_server/server_policy.py \
     --ckpt_path ${ckpt_path} \
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # Capture PID immediately
   policyserver_pids+=($pid)
   sleep 20
@@ -146,7 +146,7 @@ for scene_name in "${scene_arr[@]}"; do
     # 启动服务并获取服务进程的 PID
     port=$((base_port + run_count))
     start_service ${gpu_id} ${ckpt_path} ${port}
-      
+
     CUDA_VISIBLE_DEVICES=${gpu_id} ${sim_python} examples/SimplerEnv/eval_files/start_simpler_env.py --ckpt-path ${ckpt_path} \
       --robot google_robot_static \
       --port $port \
@@ -154,7 +154,7 @@ for scene_name in "${scene_arr[@]}"; do
       --env-name ${env_name} --scene-name ${scene_name} \
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.21 0.21 1 --obj-variation-mode episode --obj-episode-range 0 60 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 -0.09 -0.09 1 &
-    
+
     eval_pids+=($!)
     run_count=$((run_count + 1))
   done
@@ -178,7 +178,7 @@ for ckpt_path in "${arr[@]}"; do
     --robot-init-x 0.35 0.35 1 --robot-init-y 0.21 0.21 1 --obj-variation-mode episode --obj-episode-range 0 60 \
     --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 -0.09 -0.09 1 \
     --additional-env-build-kwargs slightly_darker_lighting=True &
-  
+
   eval_pids+=($!)
   run_count=$((run_count + 1))
 
@@ -196,7 +196,7 @@ for ckpt_path in "${arr[@]}"; do
     --robot-init-x 0.35 0.35 1 --robot-init-y 0.21 0.21 1 --obj-variation-mode episode --obj-episode-range 0 60 \
     --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 -0.09 -0.09 1 \
     --additional-env-build-kwargs slightly_brighter_lighting=True &
-  
+
   eval_pids+=($!)
   run_count=$((run_count + 1))
 done
@@ -208,7 +208,7 @@ declare -a table_scene_arr=("Baked_sc1_staging_objaverse_cabinet1_h870" \
 
 for scene_name in "${table_scene_arr[@]}"; do
   for ckpt_path in "${arr[@]}"; do
-    gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}  
+    gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}
     port=$((base_port + run_count))
     start_service ${gpu_id} ${ckpt_path} ${port}
 
@@ -219,7 +219,7 @@ for scene_name in "${table_scene_arr[@]}"; do
       --env-name ${env_name} --scene-name ${scene_name} \
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.21 0.21 1 --obj-variation-mode episode --obj-episode-range 0 60 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 -0.09 -0.09 1 &
-    
+
     eval_pids+=($!)
     run_count=$((run_count + 1))
   done
@@ -232,7 +232,7 @@ scene_name=google_pick_coke_can_1_v4
 
 for env_name in "${env_arr[@]}"; do
   for ckpt_path in "${arr[@]}"; do
-    gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}  
+    gpu_id=${CUDA_DEVICES[$((run_count % NUM_GPUS))]}
     port=$((base_port + run_count))
     start_service ${gpu_id} ${ckpt_path} ${port}
 

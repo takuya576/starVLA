@@ -1,5 +1,5 @@
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /home/takuya/llavavla
 export starvla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starvlaSAM/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
@@ -11,7 +11,7 @@ MODEL_PATH=$1
 # Optional: allow overriding via argument
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
+  export MODEL_PATH="/home/takuya/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
 fi
 
 export ckpt_path=${MODEL_PATH}
@@ -36,7 +36,7 @@ start_service() {
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # Capture PID immediately
   policyserver_pids+=($pid)
   sleep 20
@@ -137,7 +137,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
         --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
         --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
         --additional-env-build-kwargs ${coke_can_option} &
-      
+
       eval_pids+=($!)  # Track evaluation job PID
       run_count=$((run_count + 1))
     done
@@ -163,7 +163,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       --additional-env-build-kwargs ${coke_can_option} &
-    
+
     eval_pids+=($!)  # Track evaluation job PID
     run_count=$((run_count + 1))
 
@@ -180,7 +180,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       --additional-env-build-kwargs ${coke_can_option} distractor_config=more &
-    
+
     eval_pids+=($!)  # Track evaluation job PID
     run_count=$((run_count + 1))
   done
@@ -207,7 +207,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
         --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
         --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
         --additional-env-build-kwargs ${coke_can_option} &
-      
+
       eval_pids+=($!)  # Track evaluation job PID
       run_count=$((run_count + 1))
     done
@@ -233,7 +233,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       --additional-env-build-kwargs ${coke_can_option} slightly_darker_lighting=True &
-    
+
   eval_pids+=($!)  # Track evaluation job PID
     run_count=$((run_count + 1))
 
@@ -249,7 +249,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
       --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
       --additional-env-build-kwargs ${coke_can_option} slightly_brighter_lighting=True &
-    
+
     eval_pids+=($!)  # Track evaluation job PID
     run_count=$((run_count + 1))
   done
@@ -275,7 +275,7 @@ for coke_can_option in "${coke_can_options_arr[@]}"; do
         --robot-init-x 0.35 0.35 1 --robot-init-y 0.20 0.20 1 --obj-init-x -0.35 -0.12 5 --obj-init-y -0.02 0.42 5 \
         --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
         --additional-env-build-kwargs ${coke_can_option} &
-      
+
       eval_pids+=($!)  # Track evaluation job PID
       run_count=$((run_count + 1))
     done

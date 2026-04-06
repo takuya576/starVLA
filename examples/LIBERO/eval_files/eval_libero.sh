@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd /mnt/petrelfs/yejinhui/Projects/starVLA
+cd /home/takuya/starVLA
 conda activate starVLA
 
 ###########################################################################################

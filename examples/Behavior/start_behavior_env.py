@@ -25,13 +25,13 @@ def load_task_description(task_name: str, tasks_jsonl_path: Path = None) -> str:
         for line in f:
             task_data = json.loads(line)
             task_name_to_description[task_data["task_name"]] = task_data["task"]
-    
+
     if task_name not in task_name_to_description:
         raise KeyError(
             f"Task name '{task_name}' not found in tasks.jsonl. "
             f"Available tasks: {list(task_name_to_description.keys())}"
         )
-    
+
     return task_name_to_description[task_name]
 
 # Module-specific constants
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     args.eval_instance_ids = [int(x) for x in args.eval_instance_ids.split()]
     # print("args.eval_instance_ids",args.eval_instance_ids)
 
-    os.environ["DISPLAY"] = ""
+    # os.environ["DISPLAY"] = ""
     # prevent a single jax process from taking up all the GPU memory
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -123,11 +123,11 @@ if __name__ == "__main__":
         "env_wrapper": {"_target_": f"omnigibson.learning.wrappers.{args.wrappers}"},
         "task": {"name": args.task_name},
         "robot": {"type": "R1Pro", "controllers": None}, # TODO: add controllers
-        "partial_scene_load": args.partial_scene_load, 
+        "partial_scene_load": args.partial_scene_load,
         "max_steps": args.max_steps,
         "write_video": args.write_video,
         "model": {
-            "_target_": "examples.Behavior.model2behavior_interface.M1Inference", 
+            "_target_": "examples.Behavior.model2behavior_interface.M1Inference",
             "policy_ckpt_path": args.ckpt_path,
             "policy_setup": args.policy_setup,
             "port": args.port,
@@ -136,10 +136,10 @@ if __name__ == "__main__":
         },
         "policy_name": args.policy_model, # It's just a name
     }
-    
+
     # Convert dictionary to OmegaConf DictConfig to support attribute access
     config = OmegaConf.create(config_dict)
-    
+
     with Evaluator(cfg=config) as evaluator:
         logger.info("Starting evaluation...")
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
                     metric.start_callback(evaluator.env)
                 while not done:
                     terminated, truncated = evaluator.step()
-                    
+
                     if terminated or truncated:
                         done = True
                     if config.write_video:

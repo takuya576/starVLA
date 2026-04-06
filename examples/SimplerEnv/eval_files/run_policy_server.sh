@@ -1,14 +1,15 @@
 
 
-cd /mnt/petrelfs/yejinhui/Projects/starVLA
+cd ~/starVLA
 export PYTHONPATH=$(pwd):${PYTHONPATH}
 
 port=6678
-gpu_id=2
+gpu_id=0
 # export DEBUG=true
-export star_vla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starVLA/bin/python
+export star_vla_python=$(which python)
 
-your_ckpt=./results/Checkpoints/1208_bridge_rt_1_Qwen3PI/final_model/pytorch_model.pt
+your_ckpt=results/Checkpoints/bridge_rt_1_qwen3_2b_gr00t/final_model/bridge_rt_1_qwen3_2b_gr00t.pt
+
 
 #### build output directory #####
 ckpt_dir=$(dirname "${your_ckpt}")

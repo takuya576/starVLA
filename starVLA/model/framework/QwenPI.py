@@ -42,12 +42,12 @@ class Qwen_PI(baseframework):
 
     Components:
       - Qwen2.5 VL interface for fused language/vision token embeddings
-      - Layer-wise cross DiT diffusion head 
-      
+      - Layer-wise cross DiT diffusion head
+
 
     Focus: Predict future continuous actions conditioned on images + instruction.
     """
-# 
+#
     def __init__(
         self,
         config: Optional[dict] = None,
@@ -75,7 +75,7 @@ class Qwen_PI(baseframework):
         self.future_action_window_size = config.framework.action_model.future_action_window_size
         self.past_action_window_size = config.framework.action_model.past_action_window_size
         self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
-        
+
 
     def forward(
         self,
@@ -95,9 +95,9 @@ class Qwen_PI(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
-        
+
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
+
 
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
@@ -129,7 +129,7 @@ class Qwen_PI(baseframework):
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
             # 对每层特征做 repeat
             vl_embs_list_repeated = [h.repeat(repeated_diffusion_steps, 1, 1) for h in vl_embs_list]
-            
+
             state_repeated = None
             if state is not None:
                 state = torch.tensor(
@@ -166,13 +166,13 @@ class Qwen_PI(baseframework):
         from deployment.model_server.tools.image_tools import to_pil_preserve
         batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
-    
+
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
+
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
-    
+
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -212,15 +212,15 @@ if __name__ == "__main__":
     cfg = OmegaConf.load(args.config_yaml)
     # try get model
     cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
-    
+
 
     model = Qwen_PI(cfg)
-    # ckpt="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1011_qwenpi/checkpoints/need_steps_10000_pytorch_model.pt"
+    # ckpt="/home/takuya/llavavla/results/Checkpoints/1011_qwenpi/checkpoints/need_steps_10000_pytorch_model.pt"
     # model = Qwen_PI.from_pretrained(ckpt)
     print(model)
 
 
-    # fake sample 
+    # fake sample
     image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
     # Create a sample
     sample = {
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     #     num_workers=1,  # For Debug
     #     collate_fn=collate_fn,
     # )
-    # # 
+    # #
     # for batch in tqdm(train_dataloader, desc="Processing Batches"):
     #     batch
     #     break

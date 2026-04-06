@@ -105,7 +105,7 @@ def calc_pick_coke_can_stats(root_result_dir):
                 if np.isnan(avg_sim_success):
                     print(f"WARNING: avg_sim_success is nan for {variant}")
                 coke_can_sim_variant_success[coke_can_orientation][ckpt_alias].append(avg_sim_success)
-            
+
             coke_can_sim_variant_success[coke_can_orientation][ckpt_alias] = np.mean(
                 coke_can_sim_variant_success[coke_can_orientation][ckpt_alias]
             )
@@ -352,7 +352,7 @@ def calc_move_near_stats(root_result_dir):
             if np.isnan(avg_sim_success):
                 print(f"WARNING: avg_sim_success is nan for {variant}")
             move_near_sim_visual_matching_success[ckpt_alias].append(avg_sim_success)
-            
+
         print(f"Ckpt {ckpt_alias} all robot arm visual matching success: {move_near_sim_visual_matching_success[ckpt_alias]}")
         move_near_sim_visual_matching_success[ckpt_alias] = np.mean(move_near_sim_visual_matching_success[ckpt_alias])
 
@@ -602,8 +602,8 @@ def calc_drawer_stats(root_result_dir):
     print("*" * 20)
     for _ in range(3):
         print()
-        
-        
+
+
 def calc_long_horizon_apple_in_drawer_stats(root_result_dir):
     print("***Drawer results***")
     # If you use a new checkpoint, please update the real evaluation results here
@@ -979,12 +979,12 @@ CKPT_MAPPING = {
     "octo-base": "octo-base",
     "octo-small": "octo-small",
     "octo-server": "octo-server",
-    "QWenACT": "steps_33333_pytorch_model.pt", 
+    "QWenACT": "steps_33333_pytorch_model.pt",
 }
 
 
 parser = argparse.ArgumentParser()
-model_path = "/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1_need/QwenGR00T/videos/steps_30000_pytorch_model.pt"
+model_path = "/home/takuya/llavavla/results/Checkpoints/1_need/QwenGR00T/videos/steps_30000_pytorch_model.pt"
 
 # 获得 文件名字
 model_name = model_path.split("/")[-1]

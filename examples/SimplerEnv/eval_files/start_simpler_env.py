@@ -24,7 +24,7 @@ if __name__ == "__main__":
     os.environ["DISPLAY"] = ""
     # prevent a single jax process from taking up all the GPU memory
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    
+
     if os.getenv("DEBUG", False):
         start_debugpy_once()
     model = ModelClient(

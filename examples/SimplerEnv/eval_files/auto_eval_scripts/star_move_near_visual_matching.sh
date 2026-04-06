@@ -1,6 +1,6 @@
 
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /home/takuya/llavavla
 export starvla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starvlaSAM/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
@@ -12,7 +12,7 @@ MODEL_PATH=$1
 # Optional: allow overriding via argument
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
+  export MODEL_PATH="/home/takuya/llavavla/results/Checkpoints/1003_qwenfast/checkpoints/steps_10000_pytorch_model.pt"
 fi
 
 export ckpt_path=${MODEL_PATH}
@@ -31,14 +31,14 @@ start_service() {
   local server_log_dir="$(dirname "${ckpt_path}")/server_logs"
   local svc_log="${server_log_dir}/$(basename "${ckpt_path%.*}")_${task_name}_${port}.log"
   mkdir -p "${server_log_dir}"
-  
+
   echo "▶️ Starting service on GPU ${gpu_id}, port ${port}"
   CUDA_VISIBLE_DEVICES=${gpu_id} ${starvla_python} deployment/model_server/server_policy.py \
     --ckpt_path ${ckpt_path} \
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # capture PID immediately
   policyserver_pids+=($pid)
   sleep 20
@@ -119,7 +119,7 @@ for urdf_version in "${urdf_version_arr[@]}"; do
       --robot-init-rot-quat-center 0 0 0 1 --robot-init-rot-rpy-range 0 0 1 0 0 1 -0.09 -0.09 1 \
       --additional-env-build-kwargs urdf_version=${urdf_version} \
       --additional-env-save-tags baked_except_bpb_orange &
-    
+
     eval_pids+=($!)
     run_count=$((run_run_count + 1))
   done

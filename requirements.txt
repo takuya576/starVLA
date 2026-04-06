@@ -30,3 +30,5 @@ diffusers
 timm
 tyro
 websockets
+snntorch
+debugpy

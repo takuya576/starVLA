@@ -2,7 +2,7 @@
 
 
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /home/takuya/llavavla
 export star_vla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starvlaSAM/bin/python
 export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
 export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
@@ -15,7 +15,7 @@ MODEL_PATH=$1
 # Optional: allow overriding via argument
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1017_QwenOFT/checkpoints/steps_65000_pytorch_model.pt"
+export MODEL_PATH="/home/takuya/llavavla/results/Checkpoints/1017_QwenOFT/checkpoints/steps_65000_pytorch_model.pt"
 fi
 
 
@@ -32,14 +32,14 @@ start_service() {
   local server_log_dir="$(dirname "${ckpt_path}")/server_logs"
   local svc_log="${server_log_dir}/$(basename "${ckpt_path%.*}")_${task_name}_${port}.log"
   mkdir -p "${server_log_dir}"
-  
+
   echo "▶️ Starting service on GPU ${gpu_id}, port ${port}"
   CUDA_VISIBLE_DEVICES=${gpu_id} ${star_vla_python} deployment/model_server/server_policy.py \
     --ckpt_path ${ckpt_path} \
     --port ${port} \
     --use_bf16 \
     > "${svc_log}" 2>&1 &
-  
+
   local pid=$!          # capture PID immediately
   policyserver_pids+=($pid)
   sleep 10

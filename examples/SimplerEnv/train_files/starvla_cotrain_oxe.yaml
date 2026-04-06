@@ -62,7 +62,7 @@ datasets:
   vla_data:
     dataset_py: lerobot_datasets
     data_root_dir: playground/Datasets/OXE_LEROBOT_DATASET
-    data_mix: bridge_rt_1 # bridge_rt_1
+    data_mix: bridge_rt_1
     action_type: delta_ee
     CoT_prompt: "Your task is {instruction}. To identify the key objects for your task. Locate their bounding boxes in [x1,y1,x2,y2] format."
     CoT_answer: bbox
@@ -72,7 +72,7 @@ datasets:
     obs: ["image_0"]
     image_size: [224,224]
     video_backend: torchvision_av
-    
+
 trainer:
   epochs: 100
   max_train_steps: 100000
@@ -80,9 +80,9 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 1e-05
-    qwen_vl_interface: 1.0e-05
-    action_model: 1.0e-04
+    base: 3.0e-06
+    qwen_vl_interface: 1.0e-06
+    action_model: 1.0e-05
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
     min_lr: 5.0e-07
