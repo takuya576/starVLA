@@ -2,12 +2,13 @@
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
-import logging, argparse
-import time, os
+import logging
+import os
+import time
 from typing import Dict, Optional, Tuple
 
-from typing_extensions import override
 import websockets.sync.client
+from typing_extensions import override
 
 from . import msgpack_numpy
 
@@ -72,6 +73,3 @@ class WebsocketClientPolicy:
         if isinstance(response, str):
             raise RuntimeError(f"Error in inference server:\n{response}")
         return msgpack_numpy.unpackb(response)
-
-
-

@@ -12,13 +12,22 @@
 <a href="https://github.com/starVLA/starVLA/issues/64#issuecomment-3715403845"><img src="https://img.shields.io/badge/WeChat-加入讨论群-brightgreen?style=for-the-badge&logo=wechat" alt="WeChat"></a>
 </p>
 
+
 ---
 
 In StarVLA (also a pun on "start VLA" ),  each functional component (model, data, trainer, config, evaluation, etc.) follows a top-down, intuitive separation and high-cohesion, low-coupling principle, enabling plug-and-play design, rapid prototyping, and independent debugging.
 
 ## News
 
-**[2026/04/06]** 🚀 **StarVLA** will soon release a major update. The new version will cover a much wider range of VL foundation models as backbones, **including world models (e.g., WM4A)**. Stay tuned!
+> **⚠️ Branch notice:** The `starVLA_dev` branch is where we actively merge new features and may be temporarily unstable. For verified results, use the stable `starVLA` branch. We encourage trying `starVLA_dev` and welcome PRs if you spot any issues!
+
+
+**[2026/04/09]** 🔜 🚀 unified **multi-benchmark co-training** example (combining LIBERO, SimplerEnv, RoboTwin, VLA-Arena, etc.) is coming soon. Stay tuned!
+
+**[2026/04/09]** 🎯 Thanks to the [RLinf](https://rlinf.readthedocs.io) team, StarVLA now supports **RL post-training**! Check out the [StarVLA × RLinf tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html) to get started.
+
+**[2026/04/09]** 🔥 **WM4A (World Model for Action)** is now integrated! Use pretrained video-generation DiT models (Cosmos-Predict2, Wan2.2) as backbones for action prediction. See [docs/WM4A.md](docs/WM4A.md) for architecture details and training instructions.
+
 
 **[2026/03/29]** 🔥 Thanks to the [ABot-M0](https://github.com/amap-cvlab/ABot-Manipulation) team for providing the [pre-trained weights](https://www.modelscope.cn/models/amap_cvlab/ABot-M0-Pretrain). For `Qwen3-VL 4B`, you can reload the `qwen_vl_interface` module in various frameworks!
 
@@ -315,21 +324,101 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines on reporting bug
 
 **LangForce**: [*LangForce: Bayesian Decomposition of Vision Language Action Models via Latent Action Queries*](https://github.com/ZGC-EmbodyAI/LangForce)
 
-**ABot-M0**: [*ABot-M0: VLA Foundation Model for Robotic Manipulation with Action Manifold Learning*](https://github.com/amap-cvlab/ABot-Manipulation)
+Examples:
+```bash
+accelerate launch \
+  --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml  \
+  --num_processes 8 \
+  starVLA/training/train_internvla.py \
+  --config_yaml ./starVLA/config/training/starvla_cotrain_oxe.yaml \
+  --framework.qwenvl.base_vlm Qwen/Qwen2.5-VL-7B-Instruct \ # override framework choice
+  --framework.qwenvl.base_vlm Qwen/Qwen2.5-VL-7B-Instruct \ # override framework choice
+  --framework.action_model.new_module ${module_name} \ # plug-in a new module to action model
+```
+
+⚠️: `framework.action_model.new_module` only adds to the global config; its behavior is on your framework.
+
+
+</details>
+
+<details close>
+<summary><b>Q: Can I freeze the VLM via parameters?</b></summary>
+
+A: Yes. StarVLA uses a regex / name list to control freezing. Example:
+```
+--trainer.freeze_modules "qwen_vl_interface.model.model.visual,dino_encoder" \
+```
+Tips: You can ``print(your_model)`` first to check the relative paths of your modules and list them as comma-separated values.
+(implementation in `TrainerUtils.freeze_backbones`.)
+
+</details>
+
+<details close>
+<summary><b>Q: Can I set different learning rates for different modules?</b></summary>
+
+A: Yes, starVLA also uses name: value dict to control learning group. Config example:
+```yaml
+trainer:
+  learning_rate:
+    base: 1e-05      # other modules
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
+```
+(Also referenced in `trainer_tools.build_param_lr_groups`.)
+</details>
+
+<details close>
+<summary><b>Q: Can I resume training from a checkpoint?</b></summary>
+
+A: Yes, somehow can. Specify the latest checkpoint path in `config.yaml`, e.g.:
+```yaml
+trainer:
+  pretrained_checkpoint: path_to_steps_10000.pt
+  reload_modules: "action_model"
+```
+Empty `reload_modules` means full load all model. However, starVLA does not save  `optimizer state`. It requires a lot of  memory/disk and bring limited benefit.
+</details>
+
+
+<details id="train-smaller-vlm" close>
+<summary><b>🚀 Train with a smaller VLM</b></summary>
+
+```bash
+    accelerate launch \
+      --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
+      --main_process_ip $MASTER_ADDR \
+      --main_process_port $MASTER_PORT \
+      --machine_rank $SLURM_PROCID \
+      --num_machines $SLURM_NNODES \
+      --num_processes=${TOTAL_GPUS} \
+      starVLA/training/train_starvla.py \
+      --config_yaml ./starVLA/config/training/starvla_cotrain_oxe.yaml \
+      --framework.name QwenGR00T \
+      --framework.qwenvl.base_vlm microsoft/Florence-2-large \
+      --run_root_dir ${run_root_dir} \
+      --run_id ${run_id} \
+      --wandb_project your_project \
+      --wandb_entity your_name
+```
+
+Note: To ensure better compatibility with already released checkpoints, we are continuing to use `--framework.qwenvl`. This parameter will be unified in the next release.
+
+</details>
+
+
+
+## ✍️ Citation & Copyright
 
 ## Citation & Copyright
 
 StarVLA is released under the MIT License, which permits commercial use, modification, distribution, and private use. Rebases are allowed for forks and feature branches; when rebasing from upstream StarVLA, use descriptive commit messages (e.g., "chore: rebase from StarVLA") and keep at least the two latest upstream commits as separate. See [License](LICENSE) for details.
 
 ```
-@misc{starvla,
-      title={StarVLA: A Lego-like Codebase for Vision-Language-Action Model Developing},
-      author={StarVLA Community},
-      year={2026},
-      eprint={2604.05014},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2604.05014},
+@article{starvla2025,
+  title={StarVLA: A Lego-like Codebase for Vision-Language-Action Model Developing},
+  author={StarVLA Community},
+  journal={arXiv preprint arXiv:2604.05014},
+  year={2026}
 }
 ```
 

@@ -4,14 +4,15 @@
 
 import asyncio
 import logging
-import traceback
 import time
+import traceback
 
 import websockets.asyncio.server
 import websockets.frames
 
 # from openpi_client import base_policy as _base_policy
 from . import msgpack_numpy
+
 
 class WebsocketPolicyServer:
     """Serves a policy using the websocket protocol. See websocket_client_policy.py for a client implementation.
@@ -24,9 +25,8 @@ class WebsocketPolicyServer:
         policy,
         host: str = "0.0.0.0",
         port: int = 10093,
-        idle_timeout: int = -1,  # 新增参数，单位秒，-1表示永不关闭
+        idle_timeout: int = -1,  # Idle timeout in seconds, -1 means never auto-close
         metadata: dict | None = None,
-
     ) -> None:
         self._policy = policy  #
         self._host = host
@@ -53,7 +53,7 @@ class WebsocketPolicyServer:
                 await server.serve_forever()
 
     async def _idle_watchdog(self, server):
-        """监控空闲时间，超时则关闭服务器"""
+        """Monitor idle time and shut down the server on timeout."""
         while True:
             await asyncio.sleep(5)
             if time.time() - self._last_active > self._idle_timeout:
@@ -71,7 +71,7 @@ class WebsocketPolicyServer:
         while True:
             try:
                 msg = msgpack_numpy.unpackb(await websocket.recv())
-                self._last_active = time.time()  # 每次收到消息刷新活跃时间
+                self._last_active = time.time()  # Refresh active time on each received message
                 ret = self._route_message(msg)  # route message
                 await websocket.send(packer.pack(ret))
             except websockets.ConnectionClosed:
@@ -95,8 +95,8 @@ class WebsocketPolicyServer:
         - Does NOT raise inside this function: all exceptions are caught and encoded in response.
         """
         req_id = msg.get("request_id", "default")
-        mtype = msg.get("type", "infer")          # default = infer
-        msg       # when no explicit payload, treat top-level as payload
+        mtype = msg.get("type", "infer")  # default = infer
+        msg  # when no explicit payload, treat top-level as payload
 
         # ping
         if mtype == "ping":
@@ -111,7 +111,7 @@ class WebsocketPolicyServer:
                     "ok": False,
                     "type": "inference_result",
                     "request_id": req_id,
-                    "error": {"message": "Payload must be a dict", "payload_type": str(type(payload))}
+                    "error": {"message": "Payload must be a dict", "payload_type": str(type(payload))},
                 }
             try:
 

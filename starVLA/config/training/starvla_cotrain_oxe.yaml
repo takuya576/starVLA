@@ -7,7 +7,7 @@ wandb_project: llavavla
 is_debug: false
 
 framework:
-  name: QwenFM
+  name: QwenPI
   qwenvl:
     base_vlm: ./playground/Pretrained_models/Qwen2.5-VL-3B-Instruct
     attn_implementation: flash_attention_2
@@ -17,7 +17,7 @@ framework:
 
   action_model:
     action_model_type: DiT-B
-    hidden_size: 1024     # 和 DiT 最后的 projection 对应，用于 ActionDecoder
+    hidden_size: 1024     # Matches DiT's final projection, used for ActionDecoder
     add_pos_embed: True
     max_seq_len: 1024
     action_dim: 7
@@ -32,8 +32,8 @@ framework:
     num_timestep_buckets: 1000
     num_inference_timesteps: 4
     num_target_vision_tokens: 32
-    diffusion_model_cfg:    # DiT Transformers 的参数
-      cross_attention_dim: 2048 # VLM 的 dim
+    diffusion_model_cfg:    # DiT Transformer parameters
+      cross_attention_dim: 2048 # VLM hidden dim
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true
@@ -41,6 +41,7 @@ framework:
       num_layers: 16
       output_dim: 2560
       positional_embeddings: null
+  obs_image_size: [224, 224]
 
 
 
@@ -97,7 +98,7 @@ trainer:
     bias: "none"
   # pretrained_checkpoint: ./results/Checkpoints/1_need/0601_qwenact_fixqwen_32gpus_lr_1e-3_qformer_36_37/steps_100000/pytorch_model.pt
   # reload_modules: 'action_model,layer_qformer' # warning: this may cause model to not converge
-  repeated_diffusion_steps: 4
+  # repeated_diffusion_steps moved to framework.action_model.repeated_diffusion_steps
   max_grad_norm: 1.0
   warmup_ratio: 0.1
   weight_decay: 0.0

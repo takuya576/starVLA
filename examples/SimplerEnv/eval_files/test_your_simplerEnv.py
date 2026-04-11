@@ -1,4 +1,3 @@
-
 # Optional: print more diagnostics for debugging
 # from sapien import disable_renderer
 # disable_renderer()  # <-- Uncomment to skip the renderer
@@ -11,6 +10,8 @@ from simpler_env.utils.env.env_builder import build_maniskill2_env, get_robot_co
 from simpler_env.utils.env.observation_utils import get_image_from_maniskill2_obs_dict
 from simpler_env.utils.visualization import write_video
 import logging
+
+from simpler_env.utils.env.env_builder import build_maniskill2_env
 
 logging.basicConfig(level=logging.DEBUG)
 

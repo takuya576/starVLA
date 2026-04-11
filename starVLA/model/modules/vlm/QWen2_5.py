@@ -2,23 +2,15 @@
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
+from typing import List, Optional
+
 import torch
-import transformers
-from typing import Optional, List
-import copy
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from typing import Dict, Optional, List
-from torch.nn.utils.rnn import pad_sequence
-from transformers import BatchFeature
-
+from starVLA.training.trainer_utils import initialize_overwatch
 from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
-
-from accelerate.logging import get_logger
-
-logger = get_logger(__name__)
+logger = initialize_overwatch(__name__)
 
 IGNORE_INDEX = -100
 IMAGE_TOKEN_INDEX = 151655
@@ -26,8 +18,10 @@ VIDEO_TOKEN_INDEX = 151656
 DEFAULT_IMAGE_TOKEN = "<image>"
 DEFAULT_VIDEO_TOKEN = "<video>"
 
-_ACTION_TOKEN_MIN = 151665 # how can we know this range?
-_ACTION_TOKEN_MAX = 153712 # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
+_ACTION_TOKEN_MIN = 151665  # how can we know this range?
+_ACTION_TOKEN_MAX = (
+    153712  # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
+)
 
 
 import torch.nn as nn
@@ -85,6 +79,14 @@ class _QWen_VL_Interface(nn.Module):
         qwenvl_config = config.framework.get("qwenvl", {})
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen2.5-VL-3B-Instruct")
         attn_implementation = qwenvl_config.get("attn_implementation", "sdpa")
+
+        # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
+        if attn_implementation == "flash_attention_2":
+            try:
+                import flash_attn  # noqa: F401
+            except ImportError:
+                print("[WARNING] flash_attn not installed, falling back to sdpa")
+                attn_implementation = "sdpa"
 
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_id,
@@ -265,14 +267,15 @@ class _QWen_VL_Interface(nn.Module):
 
         # image_inputs = list of PIL
         image_inputs, video_inputs = process_vision_info(messages)
-        batch_input = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
-
+        batch_input = self.processor(
+            text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt"
+        )
 
         # if solutions, mask out the non solution tokens in labels --> @JinhuiYE can we mask out system prompt?
         if solutions is not None:
-            action_token_min = _ACTION_TOKEN_MIN # how can we know this range? --> we has other way for this, but is slower see qwenhelix branch
-            action_token_max = _ACTION_TOKEN_MAX # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
-            labels = batch_input['input_ids'].clone()
+            action_token_min = _ACTION_TOKEN_MIN  # how can we know this range? --> we has other way for this, but is slower see qwenhelix branch
+            action_token_max = _ACTION_TOKEN_MAX  # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
+            labels = batch_input["input_ids"].clone()
             # For each sequence in the batch, find the first occurrence of an action token.
             for i in range(labels.size(0)):
                 seq = labels[i]
@@ -286,21 +289,29 @@ class _QWen_VL_Interface(nn.Module):
                 else:
                     # If no action token is found, mask the entire sequence.
                     seq[:] = IGNORE_INDEX
-                    RuntimeWarning (f"action token are on in yout tokenizer, plz see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md.")
+                    RuntimeWarning(
+                        "action token are on in yout tokenizer, plz see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md."
+                    )
 
-            labels[labels == self.processor.tokenizer.pad_token_id] = -100 ## mask out pad tokens as well
-            batch_input['labels'] = labels
+            labels[labels == self.processor.tokenizer.pad_token_id] = -100  ## mask out pad tokens as well
+            batch_input["labels"] = labels
 
         return batch_input.to(self.model.device)
 
 
-
 if __name__ == "__main__":
-    from omegaconf import OmegaConf
-    import debugpy
     import argparse
+
+    import debugpy
+    from omegaconf import OmegaConf
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_yaml", type=str, default="./starVLA/config/training/starvla_cotrain_oxe.yaml", help="Path to YAML config")
+    parser.add_argument(
+        "--config_yaml",
+        type=str,
+        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        help="Path to YAML config",
+    )
     args, clipargs = parser.parse_known_args()
 
     debugpy.listen(("0.0.0.0", 10092))
