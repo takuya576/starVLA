@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from accelerate.logging import get_logger
+from starVLA.model.tools import auto_get_trainable_modules
 
 logger = get_logger(__name__)
 
@@ -207,6 +208,20 @@ class TrainerUtils:
             f"# Parameters (in millions): {num_params / 10**6:.3f} Total, {num_trainable_params / 10**6:.3f} Trainable"
         )
         return num_params, num_trainable_params
+
+    @staticmethod
+    def print_trainable_modules(model):
+        """
+        Log the names of trainable modules in the model (grouped/collapsed).
+        :param model: PyTorch model instance
+        :param max_depth: max recursion depth for module tree walk (None = unlimited)
+        """
+        if dist.get_rank() == 0:
+            modules = auto_get_trainable_modules(model, max_depth=None)
+            print("📊 trainable modules:")
+            for module in modules:
+                print(f"- {module}")
+            return modules
 
     @staticmethod
     def load_pretrained_backbones(model, checkpoint_path=None, reload_modules=None):
@@ -470,7 +485,7 @@ class TrainerUtils:
 
         # 获取所有符合命名规则，支持 .pt 和 .safetensors
         checkpoints = [
-            f for f in os.listdir(checkpoint_dir) 
+            f for f in os.listdir(checkpoint_dir)
             if re.match(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$", f)
             and os.path.isfile(os.path.join(checkpoint_dir, f))  # 确保是文件
         ]

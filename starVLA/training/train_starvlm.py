@@ -150,6 +150,7 @@ class VLAMTrainer(TrainerUtils):
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,
                 group="vla-train",
+                config=OmegaConf.to_container(self.config, resolve=True),
             )
 
     def _init_checkpointing(self):

@@ -50,7 +50,7 @@ class baseframework(PreTrainedModel):
         """
         Initialize base nn.Module. Subclasses add components.
         """
-        
+
         super().__init__(hf_config)
 
     @classmethod
@@ -117,6 +117,36 @@ class baseframework(PreTrainedModel):
         # **ensure model is on GPU**
         FrameworkModel = FrameworkModel
         return FrameworkModel
+
+    def apply_lora(self, cfg):
+        lora_cfg = cfg.trainer.get('lora', None)
+        if lora_cfg is None or not lora_cfg.get('enable', False):
+            return
+
+        if not hasattr(self, 'qwen_vl_interface'):
+            logger.warning("[LoRA] qwen_vl_interface not found, skipping")
+            return
+
+        from peft import LoraConfig, get_peft_model
+
+        target_modules = list(lora_cfg.target_modules)
+
+        lora_config = LoraConfig(
+            r=lora_cfg.rank,
+            lora_alpha=lora_cfg.alpha,
+            lora_dropout=lora_cfg.dropout,
+            target_modules=target_modules,
+            bias=lora_cfg.bias,
+        )
+        self.qwen_vl_interface.model = get_peft_model(
+            self.qwen_vl_interface.model, lora_config
+        )
+
+        trainable = sum(p.numel() for p in self.qwen_vl_interface.model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in self.qwen_vl_interface.model.parameters())
+        logger.info(f"[LoRA] Applied: rank={lora_cfg.rank}, alpha={lora_cfg.alpha}, "
+                    f"targets={target_modules}, "
+                    f"trainable={trainable:,}/{total:,} ({100*trainable/total:.2f}%)")
 
     @staticmethod
     def _check_unnorm_key(norm_stats, unnorm_key):
@@ -233,7 +263,7 @@ class baseframework(PreTrainedModel):
     def get_action_stats(self, unnorm_key=None, norm_stats=None):
         """
         Duplicate stats accessor (retained for backward compatibility).
-        # in future, it will own to policy interface and pack as 
+        # in future, it will own to policy interface and pack as
         """
         if norm_stats ==None:
             norm_stats = self.norm_stats

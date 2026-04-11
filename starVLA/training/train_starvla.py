@@ -128,6 +128,7 @@ class VLATrainer(TrainerUtils):
         )
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
         self.print_trainable_parameters(self.model)
+        self.print_trainable_modules(self.model)
 
         self.model, self.optimizer, self.vla_train_dataloader = self.setup_distributed_training(
             self.accelerator,
@@ -155,6 +156,7 @@ class VLATrainer(TrainerUtils):
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,
                 group="vla-train",
+                config=OmegaConf.to_container(self.config, resolve=True),
             )
 
     def _init_checkpointing(self):
@@ -206,11 +208,11 @@ class VLATrainer(TrainerUtils):
 
     def _save_checkpoint(self):
         """Save current training state."""
+        state_dict = self.accelerator.get_state_dict(self.model)
         if self.accelerator.is_main_process:
             save_format = getattr(self.config.trainer, "save_format", "pt")
             checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
 
-            state_dict = self.accelerator.get_state_dict(self.model)
             if save_format == "safetensors":
                 from safetensors.torch import save_file
 
@@ -363,7 +365,7 @@ class VLATrainer(TrainerUtils):
 
                 save_file(state_dict, os.path.join(final_checkpoint, "model.safetensors"))
             elif save_format == "pt":
-                torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
+                torch.save(state_dict, os.path.join(final_checkpoint, f"{self.config.run_id}.pt"))
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")
@@ -380,8 +382,10 @@ def main(cfg) -> None:
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")
 
+    accelerator.gradient_accumulation_steps = cfg.trainer.gradient_accumulation_steps
     output_dir = setup_directories(cfg=cfg)
     vla = build_framework(cfg)
+    vla.apply_lora(cfg)
     vla_train_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 

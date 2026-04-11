@@ -80,9 +80,9 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 3.0e-06
-    qwen_vl_interface: 1.0e-06
-    action_model: 1.0e-05
+    base: 3.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
     min_lr: 5.0e-07
@@ -90,6 +90,13 @@ trainer:
   loss_scale:
     vla: 1.0
     vlm: 0.1
+  lora:
+    enable: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: ["q_proj", "v_proj"]
+    bias: "none"
   # pretrained_checkpoint: ./results/Checkpoints/1_need/0601_qwenact_fixqwen_32gpus_lr_1e-3_qformer_36_37/steps_100000/pytorch_model.pt
   # reload_modules: 'action_model,layer_qformer' # warning: this may cause model to not converge
   repeated_diffusion_steps: 4

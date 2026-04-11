@@ -32,3 +32,4 @@ tyro
 websockets
 snntorch
 debugpy
+peft>=0.7.0

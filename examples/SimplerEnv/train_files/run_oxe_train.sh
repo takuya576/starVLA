@@ -13,12 +13,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # === Please modify the following paths according to your environment ===
 Framework_name=QwenGR00T
 freeze_module_list=''
-base_vlm=results/Checkpoints/bridge_rt_1_qwen3_2b_gr00t/final_model/bridge_rt_1_qwen3_2b_gr00t.pt
+base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
 config_yaml=./examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml
 oxe_data_root=playground/Datasets/OXE_LEROBOT_DATASET
 data_mix=bridge_rt_1
 run_root_dir=./results/Checkpoints
-run_id=${data_mix}_qwen3_2b_gr00t
+run_id=${data_mix}_qwen3_4b_gr00t
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -42,10 +42,10 @@ accelerate launch \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --datasets.vla_data.data_root_dir ${oxe_data_root}\
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 16 \
+  --datasets.vla_data.per_device_batch_size 32 \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 160000 \
-  --trainer.save_interval 5000 \
+  --trainer.max_train_steps 120000 \
+  --trainer.save_interval 10000 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 1000 \
   --trainer.gradient_accumulation_steps 1 \
