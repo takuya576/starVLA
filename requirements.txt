@@ -30,6 +30,7 @@ diffusers
 timm
 tyro
 websockets
+tdigest==0.5.2.2
 snntorch
 debugpy
 peft>=0.7.0
