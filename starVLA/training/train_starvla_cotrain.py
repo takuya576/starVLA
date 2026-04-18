@@ -215,7 +215,7 @@ class VLAMTrainer(TrainerUtils):
                 self.config.save_accessed_config(output_dir / "config.yaml", use_original_values=False)
                 full_cfg_path = output_dir / "config.full.yaml"
                 logger.info(f"📦 Saving full merged configuration to `{full_cfg_path}`...")
-                self.config.save_full_config(full_cfg_path, resolve=True)
+                self.config.save_full_config(full_cfg_path)
                 logger.info("✅ Configuration files saved")
 
         self.accelerator.wait_for_everyone()
@@ -224,7 +224,7 @@ class VLAMTrainer(TrainerUtils):
         """Record training metrics."""
         if self.completed_steps % self.config.trainer.logging_frequency == 0 and dist.get_rank() == 0:
             metrics["learning_rate"] = self.lr_scheduler.get_last_lr()[0]
-            metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
+            metrics["epoch"] = round(self.completed_steps * self.config.trainer.gradient_accumulation_steps / len(self.vla_train_dataloader), 2)
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
@@ -280,9 +280,11 @@ class VLAMTrainer(TrainerUtils):
             step_metrics = self._train_step(batch_vla, batch_vlm)
             t_end_model = time.perf_counter()
 
-            if self.accelerator.sync_gradients:
-                progress_bar.update(1)
-                self.completed_steps += 1
+            if not self.accelerator.sync_gradients:
+                continue
+
+            progress_bar.update(1)
+            self.completed_steps += 1
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(

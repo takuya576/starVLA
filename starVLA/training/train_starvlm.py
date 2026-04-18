@@ -200,7 +200,7 @@ class VLAMTrainer(TrainerUtils):
                 self.config.save_accessed_config(output_dir / "config.yaml", use_original_values=False)
                 full_cfg_path = output_dir / "config.full.yaml"
                 logger.info(f"📦 Saving full merged configuration to `{full_cfg_path}`...")
-                self.config.save_full_config(full_cfg_path, resolve=True)
+                self.config.save_full_config(full_cfg_path)
                 logger.info("✅ Configuration files saved")
 
         self.accelerator.wait_for_everyone()
@@ -212,7 +212,7 @@ class VLAMTrainer(TrainerUtils):
             if hasattr(self.vlm_train_dataloader, "__len__"):
                 dataloader_length = len(self.vlm_train_dataloader)
                 if dataloader_length:
-                    metrics["epoch"] = round(self.completed_steps / dataloader_length, 2)
+                    metrics["epoch"] = round(self.completed_steps * self.config.trainer.gradient_accumulation_steps / dataloader_length, 2)
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Metrics: {metrics}")
 
@@ -250,9 +250,11 @@ class VLAMTrainer(TrainerUtils):
             batch_vlm = self._get_next_batch()
             step_metrics = self._train_step(batch_vlm)
 
-            if self.accelerator.sync_gradients:
-                progress_bar.update(1)
-                self.completed_steps += 1
+            if not self.accelerator.sync_gradients:
+                continue
+
+            progress_bar.update(1)
+            self.completed_steps += 1
 
             if self.completed_steps % self.config.trainer.eval_interval == 0:
                 step_metrics = self.eval_action_model(step_metrics)
@@ -296,7 +298,8 @@ class VLAMTrainer(TrainerUtils):
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             self.optimizer.step()
-            self.lr_scheduler.step()
+            if self.accelerator.sync_gradients:
+                self.lr_scheduler.step()
             log_dict["vlm_loss"] = vlm_loss.item()
 
         return log_dict

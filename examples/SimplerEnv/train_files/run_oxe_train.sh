@@ -42,13 +42,13 @@ accelerate launch \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --datasets.vla_data.data_root_dir ${oxe_data_root}\
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 32 \
+  --datasets.vla_data.per_device_batch_size 16 \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 120000 \
-  --trainer.save_interval 10000 \
+  --trainer.max_train_steps 30000 \
+  --trainer.save_interval 5000 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 1000 \
-  --trainer.gradient_accumulation_steps 1 \
+  --trainer.gradient_accumulation_steps 8 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project starVLA_simplerEnv \

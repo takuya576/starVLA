@@ -8,7 +8,7 @@ gpu_id=0
 # export DEBUG=true
 export star_vla_python=$(which python)
 
-your_ckpt=results/Checkpoints/bridge_rt_1_qwen3_2b_gr00t/final_model/bridge_rt_1_qwen3_2b_gr00t.pt
+your_ckpt=results/Checkpoints/bridge_rt_1_qwen3_4b_gr00t/checkpoints/steps_20000_pytorch_model.pt
 
 
 #### build output directory #####

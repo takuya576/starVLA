@@ -239,6 +239,8 @@ class baseframework(PreTrainedModel):
         FrameworkModel = build_framework(cfg=model_config)
         # set for action un-norm
         FrameworkModel.norm_stats = norm_stats
+        # Apply LoRA wrapper if the checkpoint was trained with LoRA enabled
+        FrameworkModel.apply_lora(model_config)
         # Load from Checkpoint (Custom --> should load both *projector* and *llm* weights)
         if pretrained_checkpoint.suffix == ".safetensors":
             from safetensors.torch import load_file

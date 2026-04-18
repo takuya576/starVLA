@@ -11,7 +11,7 @@ export PYTHONPATH=$(pwd):${PYTHONPATH}
 if [ -n "$1" ]; then
   MODEL_PATH="$1" # model path indict the output tree
 else
-  MODEL_PATH=results/Checkpoints/bridge_rt_1_qwen3_2b_gr00t/final_model/bridge_rt_1_qwen3_2b_gr00t.pt
+  MODEL_PATH=results/Checkpoints/bridge_rt_1_qwen3_4b_gr00t/checkpoints/steps_20000_pytorch_model.pt
 fi
 
 port=${2:-6678} # connect to your policy server port

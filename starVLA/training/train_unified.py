@@ -289,7 +289,7 @@ class UnifiedTrainer(TrainerUtils):
                 for name in self.supported_tags:
                     dl = self.data_manager.dataloaders[name]
                     if hasattr(dl, "__len__") and len(dl):
-                        metrics["epoch"] = round(self.completed_steps / len(dl), 2)
+                        metrics["epoch"] = round(self.completed_steps * self.config.trainer.gradient_accumulation_steps / len(dl), 2)
                         break
                 wandb.log(metrics, step=self.completed_steps)
                 logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
@@ -344,7 +344,8 @@ class UnifiedTrainer(TrainerUtils):
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             self.optimizer.step()
-            self.lr_scheduler.step()
+            if self.accelerator.sync_gradients:
+                self.lr_scheduler.step()
 
         return log_dict, True
 
@@ -386,9 +387,11 @@ class UnifiedTrainer(TrainerUtils):
             if not did_update:
                 continue
 
-            if self.accelerator.sync_gradients:
-                progress_bar.update(1)
-                self.completed_steps += 1
+            if not self.accelerator.sync_gradients:
+                continue
+
+            progress_bar.update(1)
+            self.completed_steps += 1
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix({"step_time": f"{t_end - t_start:.3f}"})
