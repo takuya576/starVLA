@@ -15,8 +15,15 @@ import numpy as np
 import torch
 from transformers import PretrainedConfig, PreTrainedModel
 
-from starVLA.model.framework.share_tools import dict_to_namespace, read_mode_config
-from starVLA.model.tools import FRAMEWORK_REGISTRY, FrameworkTools, auto_get_trainable_modules
+from starVLA.model.framework.share_tools import (
+    dict_to_namespace,
+    read_mode_config,
+)
+from starVLA.model.tools import (
+    FRAMEWORK_REGISTRY,
+    FrameworkTools,
+    auto_get_trainable_modules,
+)
 from starVLA.training.trainer_utils import initialize_overwatch
 
 logger = initialize_overwatch(__name__)
@@ -41,14 +48,18 @@ def _auto_import_framework_modules() -> None:
             for _, sub_name, _ in pkgutil.iter_modules([str(sub_dir)]):
                 if sub_name.startswith("_"):
                     continue
-                importlib.import_module(f"starVLA.model.framework.{module_name}.{sub_name}")
+                importlib.import_module(
+                    f"starVLA.model.framework.{module_name}.{sub_name}"
+                )
         else:
             importlib.import_module(f"starVLA.model.framework.{module_name}")
 
     _FRAMEWORKS_IMPORTED = True
 
 
-def build_framework(cfg): # The single entry point for building different model frameworks
+def build_framework(
+    cfg,
+):  # The single entry point for building different model frameworks
     """
     Build a framework model from config.
     Args:
@@ -57,7 +68,9 @@ def build_framework(cfg): # The single entry point for building different model 
         nn.Module: Instantiated framework model.
     """
     if not hasattr(cfg, "framework") or not hasattr(cfg.framework, "name"):
-        raise ValueError("Missing `cfg.framework.name`. The framework API now only accepts `framework.name`.")
+        raise ValueError(
+            "Missing `cfg.framework.name`. The framework API now only accepts `framework.name`."
+        )
 
     _auto_import_framework_modules()
 
@@ -139,10 +152,15 @@ class baseframework(PreTrainedModel):
         if tag == "vla":
             return type(self).forward is not baseframework.forward
         if tag == "vlm":
-            return hasattr(self, "qwen_vl_interface") or type(self).forward_vlm is not baseframework.forward_vlm
+            return (
+                hasattr(self, "qwen_vl_interface")
+                or type(self).forward_vlm is not baseframework.forward_vlm
+            )
         return False
 
-    def compute_loss(self, tag: str, batch, loss_scale: dict = None) -> Dict[str, torch.Tensor] | None:
+    def compute_loss(
+        self, tag: str, batch, loss_scale: dict = None
+    ) -> Dict[str, torch.Tensor] | None:
         """Unified forward entry-point: route to the right forward by *tag*.
 
         The trainer calls ``model.compute_loss(tag, batch)`` for every
@@ -178,7 +196,9 @@ class baseframework(PreTrainedModel):
             return None
 
         # Apply loss scale and filter to Tensor values only
-        return {k: v * scale for k, v in out.items() if isinstance(v, torch.Tensor)}
+        return {
+            k: v * scale for k, v in out.items() if isinstance(v, torch.Tensor)
+        }
 
     def forward_vlm(self, batch) -> Dict[str, torch.Tensor]:
         """VLM forward pass (default implementation).
@@ -230,7 +250,9 @@ class baseframework(PreTrainedModel):
             FileNotFoundError: If underlying files are missing (surfaced earlier).
         """
         pretrained_checkpoint = Path(pretrained_checkpoint)
-        model_config, norm_stats = read_mode_config(pretrained_checkpoint)  # read config and norm_stats
+        model_config, norm_stats = read_mode_config(
+            pretrained_checkpoint
+        )  # read config and norm_stats
 
         config = dict_to_namespace(model_config)
         model_config = config
@@ -247,7 +269,9 @@ class baseframework(PreTrainedModel):
 
             model_state_dict = load_file(str(pretrained_checkpoint))
         else:
-            model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")
+            model_state_dict = torch.load(
+                pretrained_checkpoint, map_location="cpu"
+            )
         # logger.info(f"Loading model weights from `{pretrained_checkpoint}`")
         model_keys = set(FrameworkModel.state_dict().keys())
         checkpoint_keys = set(model_state_dict.keys())
@@ -261,7 +285,9 @@ class baseframework(PreTrainedModel):
             if missing_keys:
                 logger.warning(f"Missing keys in state_dict: {missing_keys}")
             if unexpected_keys:
-                logger.warning(f"Unexpected keys in state_dict: {unexpected_keys}")
+                logger.warning(
+                    f"Unexpected keys in state_dict: {unexpected_keys}"
+                )
 
             raise e
 
@@ -270,17 +296,14 @@ class baseframework(PreTrainedModel):
         return FrameworkModel
 
     def apply_lora(self, cfg):
-        lora_cfg = cfg.trainer.get('lora', None)
-        if lora_cfg is None or not lora_cfg.get('enable', False):
-            return
-
-        if not hasattr(self, 'qwen_vl_interface'):
-            logger.warning("[LoRA] qwen_vl_interface not found, skipping")
+        lora_cfg = cfg.trainer.get("lora", None)
+        if lora_cfg is None or not lora_cfg.get("enable", False):
             return
 
         from peft import LoraConfig, get_peft_model
 
-        target_modules = list(lora_cfg.target_modules)
+        tm = lora_cfg.target_modules
+        target_modules = tm if isinstance(tm, str) else list(tm)
 
         lora_config = LoraConfig(
             r=lora_cfg.rank,
@@ -289,15 +312,41 @@ class baseframework(PreTrainedModel):
             target_modules=target_modules,
             bias=lora_cfg.bias,
         )
-        self.qwen_vl_interface.model = get_peft_model(
-            self.qwen_vl_interface.model, lora_config
-        )
 
-        trainable = sum(p.numel() for p in self.qwen_vl_interface.model.parameters() if p.requires_grad)
-        total = sum(p.numel() for p in self.qwen_vl_interface.model.parameters())
-        logger.info(f"[LoRA] Applied: rank={lora_cfg.rank}, alpha={lora_cfg.alpha}, "
-                    f"targets={target_modules}, "
-                    f"trainable={trainable:,}/{total:,} ({100*trainable/total:.2f}%)")
+        if hasattr(self, "qwen_vl_interface"):
+            target_name = "qwen_vl_interface"
+            self.qwen_vl_interface.model = get_peft_model(
+                self.qwen_vl_interface.model, lora_config
+            )
+            wrapped = self.qwen_vl_interface.model
+        elif hasattr(self, "backbone") and hasattr(
+            self.backbone, "transformer"
+        ):
+            target_name = "backbone.transformer"
+            self.backbone.transformer = get_peft_model(
+                self.backbone.transformer, lora_config
+            )
+            wrapped = self.backbone.transformer
+        else:
+            logger.warning(
+                "[LoRA] no supported LoRA target found (expected qwen_vl_interface or backbone.transformer), skipping"
+            )
+            return
+
+        trainable = sum(
+            p.numel() for p in wrapped.parameters() if p.requires_grad
+        )
+        total = sum(p.numel() for p in wrapped.parameters())
+        if trainable == 0:
+            raise ValueError(
+                f"[LoRA] target_modules={target_modules} matched nothing in {target_name}. "
+                f"Check module naming (Qwen uses q_proj/v_proj; diffusers DiT uses to_q/to_v/to_out.0)."
+            )
+        logger.info(
+            f"[LoRA] Applied: rank={lora_cfg.rank}, alpha={lora_cfg.alpha}, "
+            f"targets={target_modules}, "
+            f"trainable={trainable:,}/{total:,} ({100*trainable/total:.2f}%)"
+        )
 
     @staticmethod
     def _check_unnorm_key(norm_stats, unnorm_key):
@@ -354,11 +403,16 @@ class baseframework(PreTrainedModel):
         Returns:
             List[str]: Module path names considered trainable.
         """
-        keys = auto_get_trainable_modules(self, max_depth=max_depth)  # auto check which modules are trainable
+        keys = auto_get_trainable_modules(
+            self, max_depth=max_depth
+        )  # auto check which modules are trainable
         return keys
 
     @staticmethod
-    def unnormalize_actions(normalized_actions: np.ndarray, action_norm_stats: Dict[str, np.ndarray]) -> np.ndarray:
+    def unnormalize_actions(
+        normalized_actions: np.ndarray,
+        action_norm_stats: Dict[str, np.ndarray],
+    ) -> np.ndarray:
         """
         Map normalized actions (≈[-1, 1]) back to original value range.
 
@@ -378,13 +432,20 @@ class baseframework(PreTrainedModel):
         Returns:
             np.ndarray: Unnormalized actions (same shape as input).
         """
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
+        mask = action_norm_stats.get(
+            "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
+        )
+        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(
+            action_norm_stats["q01"]
+        )
         normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1)
+        normalized_actions[:, 6] = np.where(
+            normalized_actions[:, 6] < 0.5, 0, 1
+        )
         actions = np.where(
             mask,
-            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
+            0.5 * (normalized_actions + 1) * (action_high - action_low)
+            + action_low,
             normalized_actions,
         )
 
@@ -416,7 +477,7 @@ class baseframework(PreTrainedModel):
         Duplicate stats accessor (retained for backward compatibility).
         # in future, it will own to policy interface and pack as
         """
-        if norm_stats ==None:
+        if norm_stats == None:
             norm_stats = self.norm_stats
         unnorm_key = self._check_unnorm_key(norm_stats, unnorm_key)
         return norm_stats[unnorm_key]["action"]

@@ -5,14 +5,14 @@ STARVLA_DIR=/home/takuya/starVLA
 cd ${STARVLA_DIR}
 conda activate starVLA
 # === Checkpoint ===
-CKPT=${STARVLA_DIR}/results/Checkpoints/0405_libero4in1_CosmoPredict2GR00T/checkpoints/steps_50000_pytorch_model.pt
+CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T/checkpoints/steps_30000_pytorch_model.pt
 
 
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
-export LIBERO_HOME=/home/jye624/Projcets/LIBERO
+export LIBERO_HOME=/home/takuya/LIBERO
 export LIBERO_CONFIG_PATH=${LIBERO_HOME}/libero
-export LIBERO_Python=/home/jye624/.conda/envs/libero/bin/python
+export LIBERO_Python=/data/takuya/miniconda3/envs/libero/bin/python
 
 export PYTHONPATH=$PYTHONPATH:${LIBERO_HOME} # let eval_libero find the LIBERO tools
 export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo

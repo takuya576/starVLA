@@ -55,7 +55,8 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 2.5e-05
+    base: 3.0e-05
+    backbone: 3.0e-05
     qwen_vl_interface: 1.0e-05
     action_model: 1.0e-04
   lr_scheduler_type: cosine_with_min_lr
@@ -65,6 +66,13 @@ trainer:
   loss_scale:
     vla: 1.0
     vlm: 0.1
+  lora:
+    enable: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: "all-linear"
+    bias: "none"
   max_grad_norm: 1.0
   warmup_ratio: 0.1
   weight_decay: 0.0

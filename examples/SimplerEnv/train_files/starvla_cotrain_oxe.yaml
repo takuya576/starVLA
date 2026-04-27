@@ -96,7 +96,7 @@ trainer:
     rank: 16
     alpha: 32
     dropout: 0.05
-    target_modules: ["q_proj", "v_proj"]
+    target_modules: "all-linear"
     bias: "none"
   # pretrained_checkpoint: ./results/Checkpoints/1_need/0601_qwenact_fixqwen_32gpus_lr_1e-3_qformer_36_37/steps_100000/pytorch_model.pt
   # reload_modules: 'action_model,layer_qformer' # warning: this may cause model to not converge

@@ -1,23 +1,26 @@
 
 
-export NCCL_SOCKET_IFNAME=bond0
-export NCCL_IB_HCA=mlx5_2,mlx5_3
+# export NCCL_SOCKET_IFNAME=bond0
+# export NCCL_IB_HCA=mlx5_2,mlx5_3
 
 # used for check save when communication
-export NCCL_BLOCKING_WAIT=1
-export NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_BLOCKING_WAIT=1
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_TIMEOUT=10000  # timeout set to 1 hour (unit: seconds)
 export NCCL_SOCKET_TIMEOUT_MS=360000
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
-Framework_name=QwenOFT
+Framework_name=CosmoPredict2GR00T
 freeze_module_list=''
-base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
+# base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
+base_wm=playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World
 config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 libero_data_root=playground/Datasets/LEROBOT_LIBERO_DATA
 data_mix=libero_all
 run_root_dir=./results/Checkpoints
-run_id=1229_libero4in1_qwen3oft
+run_id=${data_mix}_CosmoPredict2GR00T
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -32,24 +35,27 @@ cp $0 ${output_dir}/
 
 accelerate launch \
   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
-  --num_processes 8 \
+  --num_processes 4 \
+  --gpu_ids 4,5,6,7 \
   starVLA/training/train_starvla.py \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
-  --framework.qwenvl.base_vlm ${base_vlm} \
+  --framework.action_model.future_action_window_size 7 \
+  --framework.world_model.base_wm ${base_wm} \
   --datasets.vla_data.data_root_dir ${libero_data_root}\
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 16 \
+  --datasets.vla_data.per_device_batch_size 4 \
   --trainer.vla_data.video_backend torchvision_av \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 80000 \
+  --trainer.max_train_steps 40000 \
   --trainer.save_interval 10000 \
   --trainer.logging_frequency 100 \
-  --trainer.eval_interval 100 \
+  --trainer.eval_interval 1000 \
+  --trainer.gradient_accumulation_steps 4 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project starVLA_Libero \
-  --wandb_entity jinhuiye \
+  --wandb_entity takuya50719-the-university-of-tokyo \
   # --is_debug True
 
 
