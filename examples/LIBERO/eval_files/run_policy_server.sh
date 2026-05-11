@@ -7,7 +7,7 @@ STARVLA_PYTHON=/data/takuya/miniconda3/envs/starVLA/bin/python
 LIBERO_PYTHON=/data/takuya/miniconda3/envs/libero/bin/python
 
 # === Checkpoint ===
-CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T/checkpoints/steps_30000_pytorch_model.pt
+CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T_lora_false/final_model/libero_all_CosmoPredict2GR00T_lora_false.pt
 
 export star_vla_python=${STARVLA_PYTHON}
 your_ckpt=${CKPT}

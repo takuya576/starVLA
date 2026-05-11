@@ -345,13 +345,30 @@ class _Wan2_Interface(nn.Module):
         Not used during standard VLA training, but useful for visualization
         and planning-based approaches.
         """
-        from diffusers import WanPipeline
+        # from diffusers import WanPipeline
 
-        pipe = WanPipeline(
+        # pipe = WanPipeline(
+        #     tokenizer=self.tokenizer,
+        #     text_encoder=self.text_encoder,
+        #     vae=self.vae,
+        #     transformer=self.transformer,
+        #     scheduler=self.scheduler,
+        # )
+        from diffusers import WanImageToVideoPipeline
+
+        pipe = WanImageToVideoPipeline(
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
             vae=self.vae,
-            transformer=self.transformer,
             scheduler=self.scheduler,
+            image_processor=None,
+            image_encoder=None,
+            transformer=self.transformer,
+            transformer_2=None,
+            boundary_ratio=None,
+            expand_timesteps=True,
         )
+        # device = next(self.transformer.parameters()).device
+        # pipe.to(device)
+        pipe.enable_model_cpu_offload()
         return pipe(**kwargs)

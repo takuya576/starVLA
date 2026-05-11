@@ -21,6 +21,7 @@ Key differences from VLM4A frameworks:
 """
 
 import sys
+import os
 from pathlib import Path
 
 _workspace_root = Path(__file__).parent.parent.parent.parent.parent
@@ -178,8 +179,8 @@ class CosmoPredict2_GR00T(baseframework):
 
         return {"action_loss": action_loss}
 
-    @torch.inference_mode()
-    def predict_action(self, examples: List[dict], **kwargs) -> np.ndarray:
+    def _prepare_inputs(self, examples: List[dict]):
+        """Shared preprocessing — guarantees predict_action and generate_video see identical inputs."""
         if type(examples) is not list:
             examples = [examples]
         batch_images = [to_pil_preserve(example["image"]) for example in examples]
@@ -189,6 +190,12 @@ class CosmoPredict2_GR00T(baseframework):
         train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+
+        return batch_images, instructions, state
+
+    @torch.inference_mode()
+    def predict_action(self, examples: List[dict], **kwargs) -> np.ndarray:
+        batch_images, instructions, state = self._prepare_inputs(examples)
 
         wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -211,8 +218,49 @@ class CosmoPredict2_GR00T(baseframework):
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 
+    @torch.inference_mode()
+    def generate_video(
+        self,
+        examples: List[dict],
+        num_frames: int = 49,
+        num_inference_steps: int = 10,
+        guidance_scale: float = 7.0,
+        seed: Optional[int] = None,
+        save_path: Optional[str] = None,
+        fps: int = 8,
+        **kwargs,
+    ) -> np.ndarray:
+        """Generate predicted future video from current observation + language."""
+        batch_images, instructions, _ = self._prepare_inputs(examples)
 
+        device = next(self.backbone.transformer.parameters()).device
+        generator = (
+            torch.Generator(device=device).manual_seed(seed) if seed is not None else None
+        )
 
+        videos = []
+        for i, (imgs, prompt) in enumerate(zip(batch_images, instructions)):
+            cond_image = imgs[-1] if isinstance(imgs, list) else imgs
+            result = self.backbone.generate(
+                image=cond_image,
+                prompt=prompt,
+                num_frames=num_frames,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                output_type="pil",
+                **kwargs,
+            )
+            frames = result.frames[0]
+
+            if save_path is not None:
+                from diffusers.utils import export_to_video
+                output_path = save_path.format(idx=i) if "{idx}" in save_path else save_path
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                export_to_video(frames, output_path, fps=fps)
+                videos.append(output_path)
+            videos.append(frames)
+        return {"videos": videos}
 
 
 if __name__ == "__main__":
@@ -280,6 +328,19 @@ if __name__ == "__main__":
     predict_output = model.predict_action(examples=[sample])  # , state=[batch[0]["state"]]
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
+
+    # Test generate_video
+    print("Testing generate_video...")
+    video_output = model.generate_video(
+        examples=[sample],
+        num_frames=5,
+        num_inference_steps=1,
+        guidance_scale=7.0,
+        seed=42,
+        save_path="results/imagined/test_episode0.mp4",
+        fps=8,
+    )
+    print(f"Generated video saved to: {video_output['videos']}")
 
     # # Advance: try forward model with dataloader
     # # can be fake sample， but here get from dataloader for simpler

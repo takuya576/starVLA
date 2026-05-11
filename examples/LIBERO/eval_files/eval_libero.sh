@@ -5,7 +5,7 @@ STARVLA_DIR=/home/takuya/starVLA
 cd ${STARVLA_DIR}
 conda activate starVLA
 # === Checkpoint ===
-CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T/checkpoints/steps_30000_pytorch_model.pt
+CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T_lora_false/final_model/libero_all_CosmoPredict2GR00T_lora_false.pt
 
 
 ###########################################################################################

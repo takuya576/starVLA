@@ -185,7 +185,7 @@ class _CosmoPredict2_Interface(nn.Module):
         # 480×832 is the pretrained resolution; spatial dims must be multiples of 16.
         # Smaller sizes (e.g. 224×224) technically work but hurt quality due to positional embedding mismatch.
         # If saving VRAM, keep ~16:9 aspect ratio: 256×448 or 320×576.
-        height, width = 320, 576
+        height, width = 256, 448
 
         # First pass: preprocess each sample, record real frame counts
         preprocessed = []
@@ -239,7 +239,7 @@ class _CosmoPredict2_Interface(nn.Module):
                 torch.tensor(self.vae.config.latents_std)
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
                 .to(device, dtype=latents.dtype)
-            ) 
+            )
             sigma_data = self.scheduler.config.sigma_data
             latents = (latents - latents_mean) / latents_std * sigma_data
 
@@ -369,4 +369,7 @@ class _CosmoPredict2_Interface(nn.Module):
             scheduler=self.scheduler,
             safety_checker=None,
         )
+        # device = next(self.transformer.parameters()).device
+        # pipe.to(device)
+        pipe.enable_model_cpu_offload()
         return pipe(**kwargs)

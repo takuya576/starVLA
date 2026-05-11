@@ -67,7 +67,7 @@ trainer:
     vla: 1.0
     vlm: 0.1
   lora:
-    enable: true
+    enable: false
     rank: 16
     alpha: 32
     dropout: 0.05

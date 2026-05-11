@@ -222,16 +222,18 @@ class TrainerUtils:
     @staticmethod
     def print_trainable_modules(model):
         """
-        Log the names of trainable modules in the model (grouped/collapsed).
+        Log the freeze status of the model, grouped by top-level submodule.
+
+        Delegates to ``starVLA.model.tools.print_freeze_status``: each top-level
+        submodule is summarized as all-Frozen / all-Trainable when its parameters
+        share a single state, or expanded into a per-parameter listing when the
+        states are mixed. Only runs on rank 0.
+
         :param model: PyTorch model instance
-        :param max_depth: max recursion depth for module tree walk (None = unlimited)
         """
         if dist.get_rank() == 0:
-            modules = auto_get_trainable_modules(model, max_depth=None)
-            print("📊 trainable modules:")
-            for module in modules:
-                print(f"- {module}")
-            return modules
+            from starVLA.model.tools import print_freeze_status
+            return print_freeze_status(model)
 
     @staticmethod
     def load_pretrained_backbones(model, checkpoint_path=None, reload_modules=None):
