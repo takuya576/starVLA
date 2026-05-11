@@ -100,6 +100,10 @@ class _QWen_VL_Interface(nn.Module):
         self.processor = processor
         self.config = config
 
+        # align qwen2.5 with qwen3 / qwen3.5: top-level hidden_size does not exist
+        # on Qwen2_5_VLConfig, but text_config.hidden_size does.
+        self.model.config.hidden_size = self.model.config.text_config.hidden_size
+
         self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
         self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
 
@@ -301,22 +305,24 @@ class _QWen_VL_Interface(nn.Module):
 
 if __name__ == "__main__":
     import argparse
+    import os
 
-    import debugpy
     from omegaconf import OmegaConf
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        default="examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
 
-    debugpy.listen(("0.0.0.0", 10092))
-    print("🔍 Rank 0 waiting for debugger attach on port 10092...")
-    debugpy.wait_for_client()
+    if os.getenv("DEBUGPY_ENABLE", "0") == "1":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 10092))
+        print("Rank 0 waiting for debugger attach on port 10092...")
+        debugpy.wait_for_client()
 
     cfg = OmegaConf.load(args.config_yaml)
 

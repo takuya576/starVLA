@@ -116,8 +116,9 @@ for i in "${!ENV_NAMES_V2[@]}"; do
       --obj-variation-mode episode \
       --obj-episode-range 0 24 \
       --robot-init-rot-quat-center 0 0 0 1 \
-      --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1 \
-      > "${task_log}" 2>&1 &
+      --robot-init-rot-rpy-range 0 0 1 0 0 1 0 0 1
+      # \
+      # > "${task_log}" 2>&1
 
     sleep 6
   done

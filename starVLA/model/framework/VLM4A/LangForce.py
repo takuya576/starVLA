@@ -27,7 +27,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from tqdm import tqdm
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -73,41 +72,42 @@ class LangForceDefaultConfig:
     name: str = "LangForce"
 
     # === VLM backbone (Qwen3-VL with latent action query tokens) ===
-    qwenvl: dict = field(default_factory=lambda: {
-        "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
-        "attn_implementation": "flash_attention_2",
-        # Number of latent action query tokens injected
-        "num_latent_action_query": 32,
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
+            "attn_implementation": "flash_attention_2",
+            # Number of latent action query tokens injected
+            "num_latent_action_query": 32,
+        }
+    )
 
     # === Action head (Flow-matching / DiT diffusion) ===
-    action_model: dict = field(default_factory=lambda: {
-        "action_model_type": "DiT-B",
-        "action_hidden_dim": 1024,
-        "hidden_size": 1024,
-        "add_pos_embed": True,
-        "max_seq_len": 1024,
-        "action_dim": 7,
-        "state_dim": 7,
-        "future_action_window_size": 7,
-        "action_horizon": 8,
-        "past_action_window_size": 0,
-        "repeated_diffusion_steps": 4,
-        "num_inference_timesteps": 4,
-        "diffusion_model_cfg": {
-            "cross_attention_dim": 2048,
-            "dropout": 0.2,
-            "final_dropout": True,
-            "interleave_self_attention": True,
-            "norm_type": "ada_norm",
-            "num_layers": 16,
-            "output_dim": 1024,
-            "positional_embeddings": None,
-        },
-    })
-
-    # === Observation image size (optional resize before encoding) ===
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            "action_model_type": "DiT-B",
+            "action_hidden_dim": 1024,
+            "hidden_size": 1024,
+            "add_pos_embed": True,
+            "max_seq_len": 1024,
+            "action_dim": 7,
+            "state_dim": 7,
+            "future_action_window_size": 7,
+            "action_horizon": 8,
+            "past_action_window_size": 0,
+            "repeated_diffusion_steps": 4,
+            "num_inference_timesteps": 4,
+            "diffusion_model_cfg": {
+                "cross_attention_dim": 2048,
+                "dropout": 0.2,
+                "final_dropout": True,
+                "interleave_self_attention": True,
+                "norm_type": "ada_norm",
+                "num_layers": 16,
+                "output_dim": 1024,
+                "positional_embeddings": None,
+            },
+        }
+    )
 
     # === LangForce-specific loss / regularizer weights ===
     # KL weight: maximize LLR via -kl_weight * kl_loss
@@ -172,9 +172,11 @@ class LangForce(baseframework):
 
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
-        self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
         # ===== Loss weights =====
         self.kl_weight = float(self.config.framework.get("kl_weight", 0.1))  # maximize LLR via -kl_weight * kl_loss
@@ -396,15 +398,13 @@ class LangForce(baseframework):
                     post_text = tokenizer.decode(post_span_ids.tolist())
 
                     raise AssertionError(
-                        "\n[LangForceV5] Language span mismatch detected!\n"
-                        f"Sample b={b}\n"
-                        f"PRIOR span idx: [{lang_start_prior}:{lang_end_prior}]  (len={prior_span_ids.numel()})\n"
-                        f"POST  span idx: [{lang_start_post}:{lang_end_post}]  (len={post_span_ids.numel()})\n"
-                        f"PRIOR span: {prior_text!r}\n"
-                        f"POST  span: {post_text!r}\n"
-                        f"PRIOR token ids (first 50): {prior_span_ids[:50].tolist()}\n"
-                        f"POST  token ids (first 50): {post_span_ids[:50].tolist()}\n"
-                        "This indicates your boundary-based language extraction is inconsistent (likely prompt/template issue)."
+                        f"\n[LangForceV5] Language span mismatch detected!\nSample b={b}\nPRIOR span idx:"
+                        f" [{lang_start_prior}:{lang_end_prior}]  (len={prior_span_ids.numel()})\nPOST  span idx:"
+                        f" [{lang_start_post}:{lang_end_post}]  (len={post_span_ids.numel()})\nPRIOR span:"
+                        f" {prior_text!r}\nPOST  span: {post_text!r}\nPRIOR token ids (first 50):"
+                        f" {prior_span_ids[:50].tolist()}\nPOST  token ids (first 50):"
+                        f" {post_span_ids[:50].tolist()}\nThis indicates your boundary-based language extraction is"
+                        " inconsistent (likely prompt/template issue)."
                     )
 
             # ===== (2) hard-token LLR needs token-level aligned targets =====
@@ -559,7 +559,7 @@ class LangForce(baseframework):
             actions_t = torch.tensor(
                 np.array(actions), device=priori_action_hidden.device, dtype=priori_action_hidden.dtype
             )
-            actions_target = actions_t[:, -(self.future_action_window_size + 1) :, :]  # [B, chunk_len, action_dim]
+            actions_target = actions_t[:, -self.action_horizon :, :]  # [B, action_horizon, action_dim]
 
             repeated_diffusion_steps = (
                 self.config.framework.action_model.get("repeated_diffusion_steps", 4)
@@ -628,7 +628,7 @@ class LangForce(baseframework):
         instructions_posteriori = [ex["lang"] + self.latent_action_query for ex in examples]
         state = [ex["state"] for ex in examples] if "state" in examples[0] else None
 
-        train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
@@ -662,24 +662,21 @@ class LangForce(baseframework):
 
 if __name__ == "__main__":
     import argparse
+    import os
 
     from omegaconf import OmegaConf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config_yaml", type=str, default="./examples/Robotwin/train_files/starvla_cotrain_robotwin.yaml"
-    )
+    parser.add_argument("--config_yaml", type=str, default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml")
     args, clipargs = parser.parse_known_args()
 
-    try:
+    if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
-    except (ImportError, RuntimeError):
-        pass
 
-    # args.config_yaml = "examples/MultiRobot/train_files/starvla_cotrain_multiRobot.yaml"
     cfg = OmegaConf.load(args.config_yaml)
 
     model: LangForce = LangForce(cfg)
@@ -689,13 +686,10 @@ if __name__ == "__main__":
     sample = {
         "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
         "image": [image],
-        "lang": "Put all the toys in the child's room ... inside the toy box.",
+        "lang": "This is a fake instruction for testing.",
     }
-    sample2 = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
-        "image": [image],
-        "lang": "Put all the toys in the child's room ... inside the toy box.",
-    }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
     batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -707,14 +701,4 @@ if __name__ == "__main__":
     pred = model.predict_action([sample])
     print("Pred shape:", pred["normalized_actions"].shape)
 
-    # # optional dataloader test (requires data)
-    # vla_dataset_cfg = cfg.datasets.vla_data
-    # from torch.utils.data import DataLoader
-    # from starVLA.dataloader.lerobot_datasets import collate_fn, get_vla_dataset
-    # cfg.datasets.vla_data.include_state = "False"
-    # dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
-    # train_dataloader = DataLoader(dataset, batch_size=2, num_workers=1, collate_fn=collate_fn)
-    # for batch in tqdm(train_dataloader, desc="Processing Batches"):
-    #     model(batch)
-    #     break
     print("Finished")

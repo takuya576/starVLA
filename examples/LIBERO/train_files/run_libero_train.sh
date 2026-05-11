@@ -34,6 +34,8 @@ mkdir -p ${output_dir}
 cp $0 ${output_dir}/
 
 
+num_processes=${NUM_PROCESSES:-$(nvidia-smi -L | wc -l)}
+
 accelerate launch \
   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 2 \

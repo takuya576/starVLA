@@ -215,7 +215,9 @@ class FlowmatchingActionHead(nn.Module):
         diffusion_model_cfg = {**action_model_cfg, **diffusion_model_cfg}
         self.model = DiT(**diffusion_model_cfg)
         self.action_dim = config.action_dim
-        self.action_horizon = config.future_action_window_size + 1
+        # `action_horizon` is the canonical chunk length, normalised upstream
+        # by share_tools.apply_config_compat.
+        self.action_horizon = int(config.action_horizon)
         self.num_inference_timesteps = config.num_inference_timesteps
 
         self.state_encoder = (
@@ -252,7 +254,7 @@ class FlowmatchingActionHead(nn.Module):
 
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
-        return (self.config.noise_s - sample) / self.config.noise_s
+        return self.config.noise_s * (1 - sample)
 
     def prepare_input(self, batch: dict) -> BatchFeature:
         return BatchFeature(data=batch)

@@ -11,7 +11,10 @@ export star_vla_python=$(which python)
 your_ckpt=results/Checkpoints/bridge_rt_1_qwen3_4b_gr00t/checkpoints/steps_20000_pytorch_model.pt
 
 
-#### build output directory #####
+
+
+############# End environment setup #############
+
 ckpt_dir=$(dirname "${your_ckpt}")
 ckpt_base=$(basename "${your_ckpt}")
 ckpt_name="${ckpt_base%.*}"

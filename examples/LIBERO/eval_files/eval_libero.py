@@ -31,7 +31,6 @@ def _binarize_gripper_open(open_val: np.ndarray | float) -> np.ndarray:
 class Args:
     host: str = "127.0.0.1"
     port: int = 10093
-    resize_size = [224, 224]
 
     #################################################################################################################
     # LIBERO environment-specific parameters
@@ -41,6 +40,7 @@ class Args:
     )
     num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
     num_trials_per_task: int = 50  # Number of rollouts per task
+    max_tasks: int = -1  # If > 0, limit the number of tasks evaluated (smoke / quick check). -1 = run all.
 
     #################################################################################################################
     # Utils
@@ -50,6 +50,9 @@ class Args:
     seed: int = 7  # Random Seed (for reproducibility)
 
     pretrained_path: str = ""
+
+    # Dataset key for un-normalization. None = auto (only if model trained on a single dataset).
+    unnorm_key: str | None = None
 
     post_process_action: bool = True
 
@@ -86,15 +89,18 @@ def eval_libero(args: Args) -> None:
         raise ValueError(f"Unknown task suite: {args.task_suite_name}")
 
     client_model = ModelClient(
-        policy_ckpt_path=args.pretrained_path,  # to get unnormalization stats
         host=args.host,
         port=args.port,
-        image_size=args.resize_size,
+        unnorm_key=args.unnorm_key,
     )
+
+    # Optional smoke-test cap (still useful for quick verification with -1 = full run).
+    n_eval_tasks = num_tasks_in_suite if args.max_tasks <= 0 else min(args.max_tasks, num_tasks_in_suite)
+    logging.info(f"Evaluating {n_eval_tasks} of {num_tasks_in_suite} tasks (max_tasks={args.max_tasks})")
 
     # Start evaluation
     total_episodes, total_successes = 0, 0
-    for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
+    for task_id in tqdm.tqdm(range(n_eval_tasks)):
         # Get task
         task = task_suite.get_task(task_id)
 
@@ -276,6 +282,12 @@ def start_debugpy_once():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s | %(message)s",
+        datefmt="%m/%d [%H:%M:%S]",
+        force=True,
+    )
     if os.getenv("DEBUG", False):
         start_debugpy_once()
     tyro.cli(eval_libero)

@@ -18,7 +18,7 @@ config_yaml=./examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml
 oxe_data_root=playground/Datasets/OXE_LEROBOT_DATASET
 data_mix=bridge_rt_1
 run_root_dir=./results/Checkpoints
-run_id=${data_mix}_qwen3_4b_gr00t
+run_id=${data_mix}_${Framework_name}
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -41,7 +41,7 @@ accelerate launch \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
-  --datasets.vla_data.data_root_dir ${oxe_data_root}\
+  --datasets.vla_data.data_root_dir ${oxe_data_root} \
   --datasets.vla_data.data_mix ${data_mix} \
   --datasets.vla_data.per_device_batch_size 16 \
   --trainer.freeze_modules ${freeze_module_list} \

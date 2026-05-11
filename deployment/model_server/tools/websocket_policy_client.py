@@ -50,8 +50,8 @@ class WebsocketClientPolicy:
                     max_size=None,
                     additional_headers=headers,
                     open_timeout=150,
-                    ping_interval=20,
-                    ping_timeout=20,
+                    ping_interval=None,
+                    ping_timeout=60,
                 )
                 metadata = msgpack_numpy.unpackb(conn.recv())
                 return conn, metadata

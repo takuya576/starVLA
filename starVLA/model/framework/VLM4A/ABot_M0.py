@@ -15,7 +15,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from tqdm import tqdm
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -51,39 +50,40 @@ class ABot_M0DefaultConfig:
     name: str = "ABot_M0"
 
     # === VLM backbone (Qwen2.5-VL / Qwen3-VL) ===
-    qwenvl: dict = field(default_factory=lambda: {
-        "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
-        "attn_implementation": "flash_attention_2",
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
+            "attn_implementation": "flash_attention_2",
+        }
+    )
 
     # === Action head (AML Flow-matching) ===
-    action_model: dict = field(default_factory=lambda: {
-        "action_model_type": "DiT-B",
-        "action_hidden_dim": 1024,
-        "hidden_size": 1024,
-        "add_pos_embed": True,
-        "max_seq_len": 1024,
-        "action_dim": 14,
-        "state_dim": 14,
-        "future_action_window_size": 15,
-        "action_horizon": 16,
-        "past_action_window_size": 0,
-        "repeated_diffusion_steps": 4,
-        "num_inference_timesteps": 4,
-        "diffusion_model_cfg": {
-            "cross_attention_dim": 2048,
-            "dropout": 0.2,
-            "final_dropout": True,
-            "interleave_self_attention": True,
-            "norm_type": "ada_norm",
-            "num_layers": 16,
-            "output_dim": 1024,
-            "positional_embeddings": None,
-        },
-    })
-
-    # === Observation image size (optional resize before encoding) ===
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            "action_model_type": "DiT-B",
+            "action_hidden_dim": 1024,
+            "hidden_size": 1024,
+            "add_pos_embed": True,
+            "max_seq_len": 1024,
+            "action_dim": 14,
+            "state_dim": 14,
+            "future_action_window_size": 15,
+            "action_horizon": 16,
+            "past_action_window_size": 0,
+            "repeated_diffusion_steps": 4,
+            "num_inference_timesteps": 4,
+            "diffusion_model_cfg": {
+                "cross_attention_dim": 2048,
+                "dropout": 0.2,
+                "final_dropout": True,
+                "interleave_self_attention": True,
+                "norm_type": "ada_norm",
+                "num_layers": 16,
+                "output_dim": 1024,
+                "positional_embeddings": None,
+            },
+        }
+    )
 
 
 @FRAMEWORK_REGISTRY.register("ABot_M0")
@@ -123,9 +123,11 @@ class ABot_M0(baseframework):
 
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
-        self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
         # optional, TODO: pip install -e path_to_vggt (https://github.com/facebookresearch/vggt)
 
@@ -140,7 +142,6 @@ class ABot_M0(baseframework):
         examples: List[dict] = None,
         **kwargs,
     ) -> Tuple:
-
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
@@ -177,7 +178,7 @@ class ABot_M0(baseframework):
             actions = torch.tensor(
                 np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype
             )  # [B, T_full, action_dim]
-            actions_target = actions[:, -(self.future_action_window_size + 1) :, :]  # (B, chunk_len, action_dim)
+            actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
             repeated_diffusion_steps = (
                 self.config.framework.action_model.get("repeated_diffusion_steps", 4)
@@ -230,7 +231,7 @@ class ABot_M0(baseframework):
 
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
 
-        train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
@@ -280,61 +281,35 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
 
-    # debugpy.listen(("0.0.0.0", 10092))
-    # print("🔍 Rank 0 waiting for debugger attach on port 10092...")
-    # debugpy.wait_for_client()
-
     cfg = OmegaConf.load(args.config_yaml)
-    # try get model
-    cfg.framework.action_model.action_hidden_dim = 2048
-
-    # cfg.framework.qwenvl.base_vlm = f"{CHECKPOINT_BASEDIR}/Florence-2-large"
 
     model: ABot_M0 = ABot_M0(cfg)
     print(model)
 
-    # fake sample
     image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-    # Create a sample
     sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 14)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image],  # three views
-        "lang": (
-            "Put all the toys in the child's room - the three board games (two on the bed and one on the table), the two jigsaw puzzles on the table, and the tennis ball on the table - inside the toy box on the table in the child's room."
-        ),
-        "state": np.random.uniform(-1, 1, size=(1, 14)).astype(np.float16),  # chunk, state_dim
+        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
+        "image": [image],
+        "lang": "This is a fake instruction for testing.",
+        "state": np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16),
     }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
-    batch = [sample, sample]  # batch size 2
+    batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     forward_output = model(batch)
     action_loss = forward_output["action_loss"]
     print(f"Action Loss: {action_loss.item()}")
 
-    # test predict action
-    predict_output = model.predict_action(examples=[sample])  # , state=[batch[0]["state"]]
+    predict_output = model.predict_action(examples=[sample])
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
 
-    # # Advance: try forward model with dataloader
-    # # can be fake sample， but here get from dataloader for simpler
-    # vla_dataset_cfg = cfg.datasets.vla_data
-    # from torch.utils.data import DataLoader
-    # from starVLA.dataloader.lerobot_datasets import collate_fn, get_vla_dataset
-    # cfg.datasets.vla_data.include_state = "False"
-    # dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
-    # train_dataloader = DataLoader(dataset, batch_size=2, num_workers=1, collate_fn=collate_fn)
-    # for batch in tqdm(train_dataloader, desc="Processing Batches"):
-    #     batch
-    #     break
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # model = model.to(device)
-    # model(batch)
-    # action = model.predict_action(examples=batch)
     print("Finished")

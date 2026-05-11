@@ -1,5 +1,4 @@
 from collections import deque
-from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 import cv2 as cv
@@ -8,7 +7,6 @@ import numpy as np
 
 from deployment.model_server.tools.websocket_policy_client import WebsocketClientPolicy
 from examples.Robocasa_tabletop.eval_files.adaptive_ensemble import AdaptiveEnsembler
-from starVLA.model.framework.share_tools import read_mode_config
 
 
 class PolicyWarper:
@@ -56,11 +54,26 @@ class PolicyWarper:
             self.action_ensembler = None
         self.num_image_history = 0
 
-        self.action_norm_stats = self.get_action_stats(self.unnorm_key, policy_ckpt_path=policy_ckpt_path)
+        server_meta = self.client.get_server_metadata()
+        print(f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key}, server_meta: {server_meta} ***")
 
     def _add_image_to_history(self, image: np.ndarray) -> None:
         self.image_history.append(image)
         self.num_image_history = min(self.num_image_history + 1, self.horizon)
+
+    @staticmethod
+    def _select_instruction(instructions, batch_index: int):
+        if not isinstance(instructions, list):
+            return instructions
+        if len(instructions) == 0:
+            raise ValueError("instructions must not be an empty list")
+        if batch_index < len(instructions):
+            return instructions[batch_index]
+        if len(instructions) == 1:
+            return instructions[0]
+        raise IndexError(
+            f"instructions has length {len(instructions)}, but batch index {batch_index} was requested"
+        )
 
     def reset(self, task_description: str or tuple) -> None:
 
@@ -111,11 +124,11 @@ class PolicyWarper:
         # prepare vla input
         examples = []
         batch_size = len(images)
-        instructions = [self.task_description] if isinstance(self.task_description, str) else self.task_description
+        instructions = self.task_description
         for b in range(batch_size):
             example = {
                 "image": images[b],  # A list of multi-view images for a single sample
-                "lang": instructions[b] if isinstance(instructions, list) else instructions,
+                "lang": self._select_instruction(instructions, b),
                 "state": input_state[b],  # N_history, 58 #Hack BUG
             }
             examples.append(example)
@@ -126,16 +139,11 @@ class PolicyWarper:
             "use_ddim": self.use_ddim,
             "num_ddim_steps": self.num_ddim_steps,
         }
+        vla_input["unnorm_key"] = self.unnorm_key
 
         response = self.client.predict_action(vla_input)
-
-        # unnormalize the action
-        normalized_actions = response["data"]["normalized_actions"]  # B, chunk, D
-
-        # unnormalize actions in batch form
-        raw_actions = self.unnormalize_actions(
-            normalized_actions=normalized_actions, action_norm_stats=self.action_norm_stats
-        )
+        # server already un-normalized via training-time transform
+        raw_actions = np.array(response["data"]["actions"])  # (B, chunk, D)
 
         # raw_actions shape: (B, chunk, D)
         if self.action_ensemble:
@@ -156,39 +164,6 @@ class PolicyWarper:
         }
 
         return {"actions": raw_action}
-
-    @staticmethod
-    def unnormalize_actions(normalized_actions: np.ndarray, action_norm_stats: Dict[str, np.ndarray]) -> np.ndarray:
-        """
-        Args:
-            normalized_actions: shape (B, chunk, D) (chunk, D)
-            action_norm_stats:
-        Returns:
-            actions
-        """
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
-
-        normalized_actions = np.clip(normalized_actions, -1, 1)
-
-        actions = np.where(
-            mask,
-            (normalized_actions + 1) / 2 * (action_high - action_low) + action_low,
-            normalized_actions,
-        )
-
-        return actions
-
-    @staticmethod
-    def get_action_stats(unnorm_key: str, policy_ckpt_path) -> dict:
-        """
-        Duplicate stats accessor (retained for backward compatibility).
-        """
-        policy_ckpt_path = Path(policy_ckpt_path)
-        model_config, norm_stats = read_mode_config(policy_ckpt_path)  # read config and norm_stats
-
-        unnorm_key = PolicyWarper._check_unnorm_key(norm_stats, unnorm_key)
-        return norm_stats[unnorm_key]["action"]
 
     def _resize_image(self, image: np.ndarray) -> np.ndarray:
         image = cv.resize(image, tuple(self.image_size), interpolation=cv.INTER_AREA)
@@ -225,26 +200,6 @@ class PolicyWarper:
         axs["image"].set_xlabel("Time in one episode (subsampled)")
         plt.legend()
         plt.savefig(save_path)
-
-    @staticmethod
-    def _check_unnorm_key(norm_stats, unnorm_key):
-        """
-        Duplicate helper (retained for backward compatibility).
-        See primary _check_unnorm_key above.
-        """
-        if unnorm_key is None:
-            assert len(norm_stats) == 1, (
-                f"Your model was trained on more than one dataset, "
-                f"please pass a `unnorm_key` from the following options to choose the statistics "
-                f"used for un-normalizing actions: {norm_stats.keys()}"
-            )
-            unnorm_key = next(iter(norm_stats.keys()))
-
-        assert unnorm_key in norm_stats, (
-            f"The `unnorm_key` you chose is not in the set of available dataset statistics, "
-            f"please choose from: {norm_stats.keys()}"
-        )
-        return unnorm_key
 
     def normalize_state(self, state: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """

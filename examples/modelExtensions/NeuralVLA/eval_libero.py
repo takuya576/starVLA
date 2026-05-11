@@ -303,4 +303,10 @@ def start_debugpy_once():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s | %(message)s",
+        datefmt="%m/%d [%H:%M:%S]",
+        force=True,
+    )
     tyro.cli(eval_libero)

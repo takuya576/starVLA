@@ -5,12 +5,14 @@ Utility classes defining a Metrics container and multiple Trackers to enable mod
 endpoints (e.g., JSONL local logs, Weights & Biases).
 """
 
-import json
-import re
 from typing import Tuple
-
+import re
+import json
 import numpy as np
 import torch
+import torch.distributed as dist
+from transformers import get_scheduler
+
 from accelerate.logging import get_logger
 from starVLA.model.tools import auto_get_trainable_modules
 
@@ -49,6 +51,41 @@ def normalize_dotlist_args(args):
     return normalized
 
 
+def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
+    """Build AdamW optimizer + LR scheduler from cfg.trainer.
+
+    Supports:
+    - Per-module learning rates via cfg.trainer.learning_rate
+    - cosine_with_min_lr (or any transformers scheduler) via cfg.trainer.lr_scheduler_type
+    """
+    param_groups = build_param_lr_groups(model=model, cfg=cfg)
+    fused_available = torch.cuda.is_available()
+    optimizer = torch.optim.AdamW(
+        param_groups,
+        lr=cfg.trainer.learning_rate.base,
+        betas=tuple(cfg.trainer.optimizer.betas),
+        weight_decay=cfg.trainer.optimizer.weight_decay,
+        eps=cfg.trainer.optimizer.eps,
+        fused=fused_available,
+    )
+
+    if dist.is_initialized() and dist.get_rank() == 0:
+        for group in optimizer.param_groups:
+            logger.info(f"LR Group {group['name']}: lr={group['lr']}, num_params={len(group['params'])}")
+
+    # Strip keys unknown to transformers' get_scheduler before passing kwargs.
+    sched_kwargs = cfg.trainer.scheduler_specific_kwargs
+    lr_scheduler = get_scheduler(
+        name=cfg.trainer.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=cfg.trainer.num_warmup_steps,
+        num_training_steps=cfg.trainer.max_train_steps,
+        scheduler_specific_kwargs=sched_kwargs,
+    )
+
+    return optimizer, lr_scheduler
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.
@@ -66,12 +103,6 @@ def build_param_lr_groups(model, cfg):
     base_lr = lr_cfg.get("base", 1e-4)  # default base learning rate
 
     freeze_modules = cfg.trainer.get("freeze_modules", "")
-    # Normalize: bool ``true`` from YAML should be treated as empty (no freeze);
-    # list/tuple values are joined into a comma-separated string.
-    if isinstance(freeze_modules, bool):
-        freeze_modules = ""
-    if isinstance(freeze_modules, (list, tuple)):
-        freeze_modules = ",".join(str(m) for m in freeze_modules)
     if not isinstance(freeze_modules, str):
         freeze_modules = ""
     freeze_patterns = [p.strip() for p in freeze_modules.split(",") if p.strip()]
@@ -130,8 +161,8 @@ def only_main_process(func):
     return wrapper
 
 
-from PIL import Image
 from torchvision.ops import box_iou
+from PIL import Image
 
 
 def resize_images(images, target_size=(224, 224)):
@@ -148,6 +179,9 @@ def resize_images(images, target_size=(224, 224)):
         return [resize_images(img, target_size) for img in images]
     else:
         raise ValueError("Unsupported image type or structure.")
+
+
+import torch.distributed as dist
 
 
 class TrainerUtils:
@@ -169,16 +203,9 @@ class TrainerUtils:
           - model:
         """
         frozen = []
-        print("#" * 30)
+        print("#"*30)
         print(freeze_modules)
-        # Normalize freeze_modules: accept str, list, or bool.
-        # A bare ``True`` (e.g. from YAML ``freeze_modules: true``) is
-        # silently ignored so that it does not accidentally skip freezing.
-        if isinstance(freeze_modules, bool):
-            freeze_modules = ""
-        if isinstance(freeze_modules, (list, tuple)):
-            freeze_modules = ",".join(str(m) for m in freeze_modules)
-        if freeze_modules and isinstance(freeze_modules, str):
+        if freeze_modules and type(freeze_modules) == str:
             # split and remove whitespace
             patterns = [p.strip() for p in freeze_modules.split(",") if p.strip()] if freeze_modules else []
 
@@ -199,7 +226,7 @@ class TrainerUtils:
                     continue
 
         # accelerator.wait_for_everyone()  # synchronize when distributed training
-        if dist.get_rank() == 0:
+        if dist.get_rank == 0:
             print(f"🔒 Frozen modules with re pattern: {frozen}")
         return model
 
@@ -495,12 +522,11 @@ class TrainerUtils:
             self.accelerator.print(f"No checkpoint directory found at {checkpoint_dir}")
             return None, 0
 
-        # Get all checkpoints matching naming convention, supports .pt and .safetensors
+        # Find all checkpoints matching the naming convention, supports .pt and .safetensors
         checkpoints = [
-            f
-            for f in os.listdir(checkpoint_dir)
+            f for f in os.listdir(checkpoint_dir) 
             if re.match(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$", f)
-            and os.path.isfile(os.path.join(checkpoint_dir, f))  # Ensure it's a file
+            and os.path.isfile(os.path.join(checkpoint_dir, f))  # ensure it is a file
         ]
 
         if not checkpoints:
@@ -517,14 +543,13 @@ class TrainerUtils:
             self.accelerator.print(f"Error parsing checkpoint filenames: {e}")
             return None, 0
 
-        # Sort by step number, get the latest checkpoint
+        # Sort by step number and get the latest checkpoint
         checkpoints_with_steps.sort(key=lambda x: x[1])
         latest_checkpoint, completed_steps = checkpoints_with_steps[-1]
 
         latest_checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
         self.accelerator.print(f"Latest checkpoint found: {latest_checkpoint_path}")
         return latest_checkpoint_path, completed_steps
-
 
 import os
 

@@ -13,7 +13,7 @@ We have verified that this workflow runs successfully on both **NVIDIA A100** an
 
 ## ⬇️ 0. Download Checkpoints
 
-We use models trained exclusively on LIBERO to perform zero-shot evaluation on LIBERO-plus.: [🤗 StarVLA/bench-libero](https://huggingface.co/collections/StarVLA/bench-libero). Their corresponding results on LIBERO-plus are summarized in the table below.
+We use models trained exclusively on LIBERO to perform zero-shot evaluation on LIBERO-plus: [🤗 StarVLA/bench-libero](https://huggingface.co/collections/StarVLA/libero). Their corresponding results on LIBERO-plus are summarized in the table below.
 
 ### 📊 Experimental Results
 
@@ -45,7 +45,7 @@ Afterwards, inside the `LIBERO-plus` environment, install the following dependen
 
 ```bash
 pip install tyro matplotlib mediapy websockets msgpack
-pip install numpy==1.24.4
+pip install numpy==1.24.4 mujoco==3.2.3
 ```
 
 ---
@@ -85,5 +85,4 @@ Also ensure the environment variables at the top of `eval_libero.sh` are correct
 ---
 
 ⚠️ **Note:** Since LIBERO-plus has 10,030 tasks, completing all the evaluations will take an extremely long time. It is recommended to run multiple model instances in parallel for the evaluations. We provide code and scripts for parallel testing on cluster `./parallel_eval/run_nebula_libero_plus`. Please modify them to fit your own cluster.
-
 

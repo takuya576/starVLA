@@ -28,8 +28,10 @@ class VLAArenaFrankaDataConfig:
     State         : EEF pos (3) + EEF axis-angle (3) + gripper qpos (1) = 7
     """
 
+    embodiment_tag = EmbodimentTag.FRANKA
     video_keys = [
         "video.primary_image",   # agentview camera
+        "video.wrist_image",   # wrist camera
     ]
     state_keys = [
         "state.x",
@@ -54,7 +56,8 @@ class VLAArenaFrankaDataConfig:
 
     observation_indices = [0]
     action_indices = list(range(8))
-    state_indices = list(range(-16, 0))
+    # state_indices = list(range(-16, 0))
+    state_indices = [0]
 
     def modality_config(self):
         return {
@@ -90,7 +93,9 @@ ROBOT_TYPE_CONFIG_MAP = {
 # Embodiment Tags
 # ---------------------------------------------------------------------------
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
-    "vla_arena_franka": EmbodimentTag.FRANKA,
+    # Per Proposal A, embodiment_tag now lives as a classvar on each DataConfig.
+    # The registry derives ROBOT_TYPE_TO_EMBODIMENT_TAG automatically. Kept as
+    # an empty dict for backward compat (it is honored as legacy override).
 }
 
 

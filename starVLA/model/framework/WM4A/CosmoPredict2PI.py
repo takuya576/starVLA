@@ -53,38 +53,42 @@ class CosmoPredict2PIDefaultConfig:
     name: str = "CosmoPredict2PI"
 
     # === World Model backbone (Cosmos-Predict2) ===
-    world_model: dict = field(default_factory=lambda: {
-        "base_wm": "./playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World",
-        "extract_layers": [-1],
-    })
+    world_model: dict = field(
+        default_factory=lambda: {
+            "base_wm": "./playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World",
+            "extract_layers": [-1],
+        }
+    )
 
     # LayerwiseFM reads qwenvl.vl_hidden_dim and qwenvl.num_vl_layers
-    qwenvl: dict = field(default_factory=lambda: {
-        "base_vlm": "./playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World",
-        "vl_hidden_dim": 2048,
-        "num_vl_layers": 28,
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            "base_vlm": "./playground/Pretrained_models/nvidia/Cosmos-Predict2-2B-Video2World",
+            "vl_hidden_dim": 2048,
+            "num_vl_layers": 28,
+        }
+    )
 
     # === Action head (Layer-wise Flow-matching / cross-DiT) ===
-    action_model: dict = field(default_factory=lambda: {
-        "action_model_type": "LayerwiseFM",
-        "action_dim": 7,
-        "state_dim": 7,
-        "future_action_window_size": 15,
-        "past_action_window_size": 0,
-        "repeated_diffusion_steps": 2,
-        "num_inference_timesteps": 4,
-        "add_pos_embed": True,
-        "max_seq_len": 1024,
-        "num_target_vision_tokens": 32,
-        "noise_beta_alpha": 1.5,
-        "noise_beta_beta": 1.0,
-        "noise_s": 0.999,
-        "num_timestep_buckets": 1000,
-        "diffusion_model_cfg": {},
-    })
-
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            "action_model_type": "LayerwiseFM",
+            "action_dim": 7,
+            "state_dim": 7,
+            "future_action_window_size": 15,
+            "past_action_window_size": 0,
+            "repeated_diffusion_steps": 2,
+            "num_inference_timesteps": 4,
+            "add_pos_embed": True,
+            "max_seq_len": 1024,
+            "num_target_vision_tokens": 32,
+            "noise_beta_alpha": 1.5,
+            "noise_beta_beta": 1.0,
+            "noise_s": 0.999,
+            "num_timestep_buckets": 1000,
+            "diffusion_model_cfg": {},
+        }
+    )
 
 
 @FRAMEWORK_REGISTRY.register("CosmoPredict2PI")
@@ -106,7 +110,7 @@ class CosmoPredict2_PI(baseframework):
         # Auto-detect hidden size and num layers from world model
         wm_hidden = self.backbone.model.config.hidden_size
         # Cosmos uses transformer_blocks, Wan uses blocks
-        if hasattr(self.backbone.transformer, 'transformer_blocks'):
+        if hasattr(self.backbone.transformer, "transformer_blocks"):
             num_blocks = len(self.backbone.transformer.transformer_blocks)
         else:
             num_blocks = len(self.backbone.transformer.blocks)
@@ -116,9 +120,11 @@ class CosmoPredict2_PI(baseframework):
 
         self.action_model: LayerwiseFlowmatchingActionHead = get_action_model(config=self.config)
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
-        self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
         # Register hooks for ALL transformer blocks (not just extract_layers)
         self._all_hidden_states = []
@@ -131,7 +137,7 @@ class CosmoPredict2_PI(baseframework):
             hook.remove()
         self._all_hooks.clear()
 
-        if hasattr(self.backbone.transformer, 'transformer_blocks'):
+        if hasattr(self.backbone.transformer, "transformer_blocks"):
             blocks = self.backbone.transformer.transformer_blocks
         else:
             blocks = self.backbone.transformer.blocks
@@ -166,10 +172,8 @@ class CosmoPredict2_PI(baseframework):
             base_hidden = vl_embs_list[-1]
 
         with torch.autocast("cuda", dtype=torch.float32):
-            actions = torch.tensor(
-                np.array(actions), device=base_hidden.device, dtype=base_hidden.dtype
-            )
-            actions_target = actions[:, -(self.future_action_window_size + 1):, :]
+            actions = torch.tensor(np.array(actions), device=base_hidden.device, dtype=base_hidden.dtype)
+            actions_target = actions[:, -self.action_horizon :, :]
 
             repeated_diffusion_steps = (
                 self.config.framework.action_model.get("repeated_diffusion_steps", 2)
@@ -184,9 +188,7 @@ class CosmoPredict2_PI(baseframework):
                 state = torch.tensor(np.array(state), device=base_hidden.device, dtype=base_hidden.dtype)
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(
-                vl_embs_list_repeated, actions_target_repeated, state_repeated
-            )
+            action_loss = self.action_model(vl_embs_list_repeated, actions_target_repeated, state_repeated)
 
         return {"action_loss": action_loss}
 
@@ -198,7 +200,7 @@ class CosmoPredict2_PI(baseframework):
         instructions = [example["lang"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None
 
-        train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
@@ -229,11 +231,12 @@ if __name__ == "__main__":
     import argparse
     import os
 
-    from PIL import Image
     from omegaconf import OmegaConf
+    from PIL import Image
 
     if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
@@ -242,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
+        default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
@@ -267,15 +270,11 @@ if __name__ == "__main__":
     sample = {
         "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
         "image": [image, image],
-        "lang": "Pick up the red block and place it on the table.",
+        "lang": "This is a fake instruction for testing.",
         "state": np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16),
     }
-    sample2 = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
-        "image": [image],
-        "lang": "Pick up the red block and place it on the table.",
-        "state": np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16),
-    }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
     batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

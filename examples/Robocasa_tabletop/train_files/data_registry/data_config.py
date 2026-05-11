@@ -11,9 +11,13 @@ from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 
 
 class FourierGr1ArmsWaistDataConfig:
+    embodiment_tag = EmbodimentTag.GR1
     video_keys = ["video.ego_view"]
     state_keys = ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand", "state.waist"]
     action_keys = ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand", "action.waist"]
+    # Per-key dims for PolicyNormProcessor (GR1 7-DOF arms, 6-finger hands, 3-DOF waist = 29-D total)
+    action_key_dims = {"action.left_arm": 7, "action.right_arm": 7, "action.left_hand": 6, "action.right_hand": 6, "action.waist": 3}
+    state_key_dims  = {"state.left_arm": 7, "state.right_arm": 7, "state.left_hand": 6, "state.right_hand": 6, "state.waist": 3}
     language_keys = ["annotation.human.coarse_action"]
     observation_indices = [0]
     action_indices = list(range(16))
@@ -43,7 +47,9 @@ ROBOT_TYPE_CONFIG_MAP = {
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
-    "fourier_gr1_arms_waist": EmbodimentTag.GR1,
+    # Per Proposal A, embodiment_tag now lives as a classvar on each DataConfig.
+    # The registry derives ROBOT_TYPE_TO_EMBODIMENT_TAG automatically. Kept as
+    # an empty dict for backward compat (it is honored as legacy override).
 }
 
 DATASET_NAMED_MIXTURES = {

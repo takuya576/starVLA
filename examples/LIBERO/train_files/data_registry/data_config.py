@@ -10,6 +10,7 @@ from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 # DataConfig
 # ---------------------------------------------------------------------------
 class Libero4in1DataConfig:
+    embodiment_tag = EmbodimentTag.FRANKA
     video_keys = [
         "video.primary_image",
         "video.wrist_image",
@@ -36,12 +37,12 @@ class Libero4in1DataConfig:
     language_keys = ["annotation.human.action.task_description"]
     observation_indices = [0]
     action_indices = list(range(8))
-    state_indices = list(range(-16, 0))
+    state_indices = [0]
 
     def modality_config(self):
         return {
             "video": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.video_keys),
-            "state": ModalityConfig(delta_indices=self.state_indices, modality_keys=self.state_keys),
+            "state": ModalityConfig(delta_indices=self.state_indices, modality_keys=self.state_keys), # igore state modality for now since some datasets don't have state and we want to be able to use them, can add back later if needed
             "action": ModalityConfig(delta_indices=self.action_indices, modality_keys=self.action_keys),
             "language": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.language_keys),
         }
@@ -72,7 +73,9 @@ ROBOT_TYPE_CONFIG_MAP = {
 # Embodiment Tags
 # ---------------------------------------------------------------------------
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
-    "libero_franka": EmbodimentTag.FRANKA,
+    # Per Proposal A, embodiment_tag now lives as a classvar on each DataConfig.
+    # The registry derives ROBOT_TYPE_TO_EMBODIMENT_TAG automatically. Kept as
+    # an empty dict for backward compat (it is honored as legacy override).
 }
 
 

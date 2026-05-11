@@ -3,11 +3,9 @@ from typing import Optional
 import cv2 as cv
 import numpy as np
 from typing import Dict
-from pathlib import Path
 
 from deployment.model_server.tools.websocket_policy_client import WebsocketClientPolicy
 from examples.SimplerEnv.eval_files.adaptive_ensemble import AdaptiveEnsembler
-from starVLA.model.tools import read_mode_config
 
 
 class ModelClient:
@@ -40,6 +38,10 @@ class ModelClient:
 
         print(f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key} ***")
 
+        server_meta = self.client.get_server_metadata()
+        self.action_chunk_size = server_meta["action_chunk_size"]
+        print(f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key}, server_meta: {server_meta} ***")
+
         self.use_ddim = use_ddim
         self.num_ddim_steps = num_ddim_steps
         self.image_size = image_size
@@ -62,13 +64,6 @@ class ModelClient:
         else:
             self.action_ensembler = None
         self.num_image_history = 0
-
-        self.action_norm_stats = self.get_action_stats(
-            self.unnorm_key, policy_ckpt_path=policy_ckpt_path
-        )
-        self.action_chunk_size = self.get_action_chunk_size(
-            policy_ckpt_path=policy_ckpt_path
-        )
 
     def _add_image_to_history(self, image: np.ndarray) -> None:
         self.image_history.append(image)
@@ -116,23 +111,13 @@ class ModelClient:
             "use_ddim": self.use_ddim,
             "num_ddim_steps": self.num_ddim_steps,
         }
+        vla_input["unnorm_key"] = self.unnorm_key
 
         action_chunk_size = self.action_chunk_size
         if step % action_chunk_size == 0:
             response = self.client.predict_action(vla_input)
-            try:
-                normalized_actions = response["data"]["normalized_actions"]  # B, chunk, D
-            except KeyError:
-                print(f"Response data: {response}")
-                raise KeyError(
-                    f"Key 'normalized_actions' not found in response: {response['data'].keys()}"
-                )
-
-            normalized_actions = normalized_actions[0]
-            self.raw_actions = self.unnormalize_actions(
-                normalized_actions=normalized_actions,
-                action_norm_stats=self.action_norm_stats,
-            )
+            # server already un-normalized via training-time transform
+            self.raw_actions = np.array(response["data"]["actions"][0])  # (chunk, D)
 
         raw_actions = self.raw_actions[step % action_chunk_size][None]
 
@@ -144,53 +129,5 @@ class ModelClient:
 
         return {"raw_action": raw_action}
 
-    @staticmethod
-    def unnormalize_actions(
-        normalized_actions: np.ndarray,
-        action_norm_stats: Dict[str, np.ndarray],
-    ) -> np.ndarray:
-        mask = action_norm_stats.get(
-            "mask", np.ones_like(action_norm_stats["min"], dtype=bool)
-        )
-        action_high = np.array(action_norm_stats["max"])
-        action_low = np.array(action_norm_stats["min"])
-        normalized_actions = np.clip(normalized_actions, -1, 1)
-        # Binarize gripper channel
-        normalized_actions[:, 6] = np.where(
-            normalized_actions[:, 6] < 0.5, 0, 1
-        )
-        actions = np.where(
-            mask,
-            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
-            normalized_actions,
-        )
-        return actions
-
-    @staticmethod
-    def get_action_stats(unnorm_key: str, policy_ckpt_path) -> dict:
-        policy_ckpt_path = Path(policy_ckpt_path)
-        model_config, norm_stats = read_mode_config(policy_ckpt_path)
-        unnorm_key = ModelClient._check_unnorm_key(norm_stats, unnorm_key)
-        return norm_stats[unnorm_key]["action"]
-
-    @staticmethod
-    def get_action_chunk_size(policy_ckpt_path) -> int:
-        model_config, _ = read_mode_config(policy_ckpt_path)
-        return model_config["framework"]["action_model"]["future_action_window_size"] + 1
-
     def _resize_image(self, image: np.ndarray) -> np.ndarray:
         return cv.resize(image, tuple(self.image_size), interpolation=cv.INTER_AREA)
-
-    @staticmethod
-    def _check_unnorm_key(norm_stats, unnorm_key):
-        if unnorm_key is None:
-            assert len(norm_stats) == 1, (
-                f"Model trained on multiple datasets; pass an unnorm_key from: "
-                f"{list(norm_stats.keys())}"
-            )
-            unnorm_key = next(iter(norm_stats.keys()))
-
-        assert unnorm_key in norm_stats, (
-            f"unnorm_key '{unnorm_key}' not found; available: {list(norm_stats.keys())}"
-        )
-        return unnorm_key

@@ -21,6 +21,7 @@ from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 # DataConfig — OXE Droid
 # ---------------------------------------------------------------------------
 class OxeDroidDataConfig:
+    embodiment_tag = EmbodimentTag.OXE_DROID
     video_keys = [
         "video.exterior_image_1",
         "video.exterior_image_2",
@@ -79,6 +80,7 @@ class OxeDroidDataConfig:
 # DataConfig — OXE Bridge
 # ---------------------------------------------------------------------------
 class OxeBridgeDataConfig:
+    embodiment_tag = EmbodimentTag.OXE_BRIDGE
     video_keys = ["video.image_0"]
     state_keys = [
         "state.x", "state.y", "state.z",
@@ -121,6 +123,7 @@ class OxeBridgeDataConfig:
 # DataConfig — OXE RT-1
 # ---------------------------------------------------------------------------
 class OxeRT1DataConfig:
+    embodiment_tag = EmbodimentTag.OXE_RT1
     video_keys = ["video.image"]
     state_keys = [
         "state.x", "state.y", "state.z",
@@ -170,9 +173,9 @@ ROBOT_TYPE_CONFIG_MAP = {
 # Embodiment Tags
 # ---------------------------------------------------------------------------
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
-    "oxe_droid": EmbodimentTag.OXE_DROID,
-    "oxe_bridge": EmbodimentTag.OXE_BRIDGE,
-    "oxe_rt1": EmbodimentTag.OXE_RT1,
+    # Per Proposal A, embodiment_tag now lives as a classvar on each DataConfig.
+    # The registry derives ROBOT_TYPE_TO_EMBODIMENT_TAG automatically. Kept as
+    # an empty dict for backward compat (it is honored as legacy override).
 }
 
 

@@ -6,13 +6,14 @@ WanGR00T Framework — Wan2.2-TI2V World Model for Action Prediction.
 Uses Wan2.2-TI2V-5B (DiT-based Text+Image-to-Video model) as the perception
 backbone. The DiT's intermediate representations encode spatiotemporal
 dynamics learned from large-scale video generation pretraining,
-which are projected to the action head for continuous action prediction.
+which are passed directly to the action head as cross-attention condition
+for continuous action prediction.
 
 Architecture:
   UMT5 (text) + VAE (image→latent) → WanTransformer3D
     → hidden_states [B, N, 3072]
-    → Linear projection [B, N, action_hidden_dim]
-    → FlowmatchingActionHead → action predictions
+    → FlowmatchingActionHead (cross-attention on 3072-dim tokens)
+    → action predictions
 
 Key differences from CosmoPredict2GR00T:
   - Text encoder: UMT5-XXL (dim=4096) vs T5 (dim=1024)
@@ -57,53 +58,57 @@ class WanGR00TDefaultConfig:
     name: str = "WanGR00T"
 
     # === World Model backbone (Wan2.2-TI2V-5B-Diffusers) ===
-    world_model: dict = field(default_factory=lambda: {
-        "base_wm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-        "extract_layers": [-1],
-    })
+    world_model: dict = field(
+        default_factory=lambda: {
+            "base_wm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            "extract_layers": [-1],
+        }
+    )
 
     # Legacy compat: factory functions (vlm/__init__, world_model/__init__)
     # fall back to qwenvl.base_vlm when world_model.base_wm is absent.
     # vl_hidden_dim is read by some action heads (VLA_AdapterHeader, LayerwiseFM).
     # TODO next version should refactor to remove this redundant config section and update all shared utilities to read from world_model.base_wm instead of qwenvl.base_vlm.
-    qwenvl: dict = field(default_factory=lambda: {
-        "base_vlm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-        "vl_hidden_dim": 3072,
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            "base_vlm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            "vl_hidden_dim": 3072,
+        }
+    )
 
     # === Action head (Flow-matching / DiT diffusion) ===
-    action_model: dict = field(default_factory=lambda: {
-        "action_model_type": "DiT-B",
-        "action_hidden_dim": 1024,
-        "hidden_size": 1024,
-        "add_pos_embed": True,
-        "max_seq_len": 1024,
-        "action_dim": 7,
-        "state_dim": 7,
-        "future_action_window_size": 7,
-        "action_horizon": 8,
-        "past_action_window_size": 0,
-        "repeated_diffusion_steps": 8,
-        "noise_beta_alpha": 1.5,
-        "noise_beta_beta": 1.0,
-        "noise_s": 0.999,
-        "num_timestep_buckets": 1000,
-        "num_inference_timesteps": 4,
-        "num_target_vision_tokens": 32,
-        "diffusion_model_cfg": {
-            # Will be set at runtime to match world model hidden_size (3072)
-            "cross_attention_dim": 3072,
-            "dropout": 0.2,
-            "final_dropout": True,
-            "interleave_self_attention": True,
-            "norm_type": "ada_norm",
-            "num_layers": 16,
-            "output_dim": 1024,
-            "positional_embeddings": None,
-        },
-    })
-
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            "action_model_type": "DiT-B",
+            "action_hidden_dim": 1024,
+            "hidden_size": 1024,
+            "add_pos_embed": True,
+            "max_seq_len": 1024,
+            "action_dim": 7,
+            "state_dim": 7,
+            "future_action_window_size": 7,
+            "action_horizon": 8,
+            "past_action_window_size": 0,
+            "repeated_diffusion_steps": 8,
+            "noise_beta_alpha": 1.5,
+            "noise_beta_beta": 1.0,
+            "noise_s": 0.999,
+            "num_timestep_buckets": 1000,
+            "num_inference_timesteps": 4,
+            "num_target_vision_tokens": 32,
+            "diffusion_model_cfg": {
+                # Decoupled from world model hidden_size; wm_projector bridges the gap
+                "cross_attention_dim": 512,
+                "dropout": 0.2,
+                "final_dropout": True,
+                "interleave_self_attention": True,
+                "norm_type": "ada_norm",
+                "num_layers": 16,
+                "output_dim": 1024,
+                "positional_embeddings": None,
+            },
+        }
+    )
 
 
 @FRAMEWORK_REGISTRY.register("WanGR00T")
@@ -127,15 +132,18 @@ class Wan_GR00T(baseframework):
         # Load world model backbone
         self.backbone = get_world_model(config=self.config)
 
-        # Align cross-attention dim to world model hidden size (3072)
+        # Project world model features to action model's cross-attention dim
         wm_hidden = self.backbone.model.config.hidden_size
-        self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = wm_hidden
+        cross_attn_dim = self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim
+        self.wm_projector = torch.nn.Linear(wm_hidden, cross_attn_dim)
 
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
-        self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
     def forward(self, examples: List[dict] = None, **kwargs) -> Tuple:
         batch_images = [example["image"] for example in examples]
@@ -156,13 +164,12 @@ class Wan_GR00T(baseframework):
             )
             # hidden_states[-1]: [B, N_tokens, hidden_dim=3072]
             last_hidden = wm_outputs.hidden_states[-1]
+            last_hidden = self.wm_projector(last_hidden)
 
         # Step 3: Action head forward and loss
         with torch.autocast("cuda", dtype=torch.float32):
-            actions = torch.tensor(
-                np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype
-            )
-            actions_target = actions[:, -(self.future_action_window_size + 1):, :]
+            actions = torch.tensor(np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype)
+            actions_target = actions[:, -self.action_horizon :, :]
 
             repeated_diffusion_steps = (
                 self.config.framework.action_model.get("repeated_diffusion_steps", 4)
@@ -189,7 +196,7 @@ class Wan_GR00T(baseframework):
         instructions = [example["lang"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None
 
-        train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
@@ -207,6 +214,7 @@ class Wan_GR00T(baseframework):
                 return_dict=True,
             )
             last_hidden = wm_outputs.hidden_states[-1]
+            last_hidden = self.wm_projector(last_hidden)
 
         state = (
             torch.from_numpy(np.array(state)).to(last_hidden.device, dtype=last_hidden.dtype)
@@ -288,11 +296,12 @@ if __name__ == "__main__":
     import argparse
     import os
 
-    from PIL import Image
     from omegaconf import OmegaConf
+    from PIL import Image
 
     if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
@@ -301,7 +310,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
+        default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
@@ -318,35 +327,23 @@ if __name__ == "__main__":
     model: Wan_GR00T = Wan_GR00T(cfg)
     print(model)
 
-    # fake sample
     image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-    # Create a sample
     sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image, image],  # three views
-        "lang": (
-            "Put all the toys in the child's room - the three board games (two on the bed and one on the table), the two jigsaw puzzles on the table, and the tennis ball on the table - inside the toy box on the table in the child's room."
-        ),
-        # "state" : np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16), # chunk, state_dim
+        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
+        "image": [image, image],
+        "lang": "This is a fake instruction for testing.",
     }
-    sample2 = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image],  # three views
-        "lang": (
-            "Put all the toys in the child's room - the three board games (two on the bed and one on the table), the two jigsaw puzzles on the table, and the tennis ball on the table - inside the toy box on the table in the child's room."
-        ),
-        # "state" : np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16), # chunk, state_dim
-    }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
-    batch = [sample, sample2]  # batch size 2
+    batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     forward_output = model(batch)
     action_loss = forward_output["action_loss"]
     print(f"Action Loss: {action_loss.item()}")
 
-    # test predict action
-    predict_output = model.predict_action(examples=[sample])  # , state=[batch[0]["state"]]
+    predict_output = model.predict_action(examples=[sample])
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
 

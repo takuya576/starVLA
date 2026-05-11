@@ -55,35 +55,46 @@ class InternVLA_M1DefaultConfig:
     name: str = "InternVLA-M1"
 
     # === VLM backbone (Qwen2.5-VL / Qwen3-VL) ===
-    qwenvl: dict = field(default_factory=lambda: {
-        "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
-        "attn_implementation": "flash_attention_2",
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct",
+            "attn_implementation": "flash_attention_2",
+        }
+    )
 
     # === DINO encoder (multi-view spatial tokens) ===
-    dino: dict = field(default_factory=lambda: {
-        "dino_backbone": "dinov2_vits14",
-    })
+    dino: dict = field(
+        default_factory=lambda: {
+            "dino_backbone": "dinov2_vits14",
+        }
+    )
 
     # === Layer-wise QFormer (multi-layer feature aggregation) ===
-    layer_qformer: dict = field(default_factory=lambda: {
-        # Start layer index for QFormer (inclusive)
-        "qformer_start_layer": 20,
-        # End layer index for QFormer (exclusive)
-        "qformer_end_layer": 36,
-    })
+    layer_qformer: dict = field(
+        default_factory=lambda: {
+            # Start layer index for QFormer (inclusive)
+            "qformer_start_layer": 20,
+            # End layer index for QFormer (exclusive)
+            "qformer_end_layer": 36,
+            # Number of learnable query tokens (must match DiT's n_conditon_token, default 64)
+            "num_query_tokens": 64,
+            # Input feature dim (aligned to VLM hidden_size, e.g. Qwen3-VL-4B-Instruct = 2048)
+            "input_dim": 2048,
+            # Output feature dim (aligned to DiT-B token_size = 768)
+            "ouptput_dim": 768,
+        }
+    )
 
     # === Action head (DiT diffusion) ===
-    action_model: dict = field(default_factory=lambda: {
-        "action_model_type": "DiT-B",
-        "action_dim": 7,
-        "future_action_window_size": 15,
-        "past_action_window_size": 0,
-        "repeated_diffusion_steps": 4,
-    })
-
-    # === Observation image size (optional resize before encoding) ===
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            "action_model_type": "DiT-B",
+            "action_dim": 7,
+            "future_action_window_size": 15,
+            "past_action_window_size": 0,
+            "repeated_diffusion_steps": 4,
+        }
+    )
 
 
 @FRAMEWORK_REGISTRY.register("InternVLA-M1")
@@ -125,8 +136,11 @@ class InternVLA_M1(baseframework):
             in_features=self.dino_encoder.num_channels, out_features=self.qwen_vl_interface.model.config.hidden_size
         )
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
 
     def forward(
         self,
@@ -195,10 +209,9 @@ class InternVLA_M1(baseframework):
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
-
             # here is a tips to accelerate training speed, by repeating each sample for several times @ref to CogACT
             actions = torch.tensor(np.array(actions), device=action_condition.device)  # [B, chunk, 7]
-            actions_future = actions[:, -(self.future_action_window_size + 1) :, :]
+            actions_future = actions[:, -self.action_horizon :, :]
 
             # tips: Repeat 'actions' 'repeated_diffusion_steps' times, resulting in [repeated_diffusion_steps*B, T, D]
             repeated_diffusion_steps = (
@@ -252,11 +265,13 @@ class InternVLA_M1(baseframework):
         """
         if not isinstance(examples, list):
             examples = [examples]
-        batch_images = [example["image"] if isinstance(example["image"], list) else [example["image"]] for example in examples]
+        batch_images = [
+            example["image"] if isinstance(example["image"], list) else [example["image"]] for example in examples
+        ]
         instructions = [example["lang"] for example in examples]
 
         # align obs and lang
-        train_obs_image_size = getattr(self.config.framework, "obs_image_size", None)
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
         instructions = [instruction.lower() for instruction in instructions]
@@ -280,7 +295,6 @@ class InternVLA_M1(baseframework):
             dino_encoded_features = self.dino_pro(dino_encoded_features)  # [B, 256, D]
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
-
             start_layer = self.config.framework.layer_qformer.qformer_start_layer
             end_layer = self.config.framework.layer_qformer.qformer_end_layer
             condition_features = qwenvl_outputs.hidden_states[start_layer:end_layer]
@@ -302,7 +316,7 @@ class InternVLA_M1(baseframework):
             # Sample random noise
             noise = torch.randn(
                 B,
-                self.future_action_window_size + 1,
+                self.action_horizon,
                 self.action_model.in_channels,
                 device=action_condition_feature.device,
             ).to(
@@ -401,6 +415,7 @@ class InternVLA_M1(baseframework):
 
 if __name__ == "__main__":
     import argparse
+    import os
 
     from omegaconf import OmegaConf
 
@@ -408,74 +423,41 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
 
-    try:
+    if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
-    except (ImportError, RuntimeError):
-        pass
 
     cfg = OmegaConf.load(args.config_yaml)
 
-    # try get model
     model = InternVLA_M1(cfg)
     print(model)
 
-    # fake sample
     image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-    # Create a sample
     sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image, image],  # two views
+        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
+        "image": [image, image],
         "lang": "This is a fake instruction for testing.",
-        # "state" : np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16), # chunk, state_dim
     }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
-    batch = [sample, sample]  # batch size 2
+    batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     forward_output = model(batch)
     action_loss = forward_output["action_loss"]
     print(f"Action Loss: {action_loss.item()}")
 
-    # test predict action
     predict_output = model.predict_action(examples=[batch[0]])
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
 
-    # model_path = "./results/Checkpoints/1_need/0906_bestvla_retrain_sota2/checkpoints/steps_50000_pytorch_model.pt"
-    # state_dict = torch.load(model_path, map_location="cpu")
-
-    # model.load_state_dict(state_dict, strict=True)
-
-    # # try forward model
-    # # can be fake sample， but here get from dataloader for simpler
-    # from starVLA.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
-
-    # vla_dataset_cfg = cfg.datasets.vla_data
-    # dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
-
-    # from torch.utils.data import DataLoader
-
-    # train_dataloader = DataLoader(
-    #     dataset,
-    #     batch_size=2,
-    #     num_workers=1,  # For Debug
-    #     collate_fn=collate_fn,
-    # )
-
-    # for batch in tqdm(train_dataloader, desc="Processing Batches"):
-    #     batch
-    #     break
-
-    # # try get model
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # model = model.to(device)
-    # model(batch)
     print("Finished")

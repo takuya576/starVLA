@@ -1,6 +1,5 @@
 import os
 from collections import deque
-from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 import cv2 as cv
@@ -10,7 +9,6 @@ from transforms3d.euler import euler2axangle
 
 from deployment.model_server.tools.websocket_policy_client import WebsocketClientPolicy
 from examples.SimplerEnv.eval_files.adaptive_ensemble import AdaptiveEnsembler
-from starVLA.model.tools import read_mode_config
 
 
 class ModelClient:
@@ -84,7 +82,8 @@ class ModelClient:
             self.action_ensembler = None
         self.num_image_history = 0
 
-        self.action_norm_stats = self.get_action_stats(self.unnorm_key, policy_ckpt_path=policy_ckpt_path)
+        server_meta = self.client.get_server_metadata()
+        print(f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key}, server_meta: {server_meta} ***")
 
     def _add_image_to_history(self, image: np.ndarray) -> None:
         self.image_history.append(image)
@@ -131,13 +130,13 @@ class ModelClient:
             "lang": self.task_description,
         }
 
-        vla_input = {
-            "examples": [example],
-            "do_sample": False,
-            "cfg_scale": self.cfg_scale,
-            "use_ddim": self.use_ddim,
-            "num_ddim_steps": self.num_ddim_steps,
-        }
+        # vla_input = {
+        #     "examples": [example],
+        #     "do_sample": False,
+        #     "cfg_scale": self.cfg_scale,
+        #     "use_ddim": self.use_ddim,
+        #     "num_ddim_steps": self.num_ddim_steps,
+        # }
 
         vla_input = {
             "examples": [example],
@@ -146,15 +145,11 @@ class ModelClient:
             "num_ddim_steps": self.num_ddim_steps,
         }
 
+        vla_input["unnorm_key"] = self.unnorm_key
         response = self.client.predict_action(vla_input)
 
-        # unnormalize the action
-        normalized_actions = response["data"]["normalized_actions"]  # B, chunk, D
-        normalized_actions = normalized_actions[0]
-
-        raw_actions = self.unnormalize_actions(
-            normalized_actions=normalized_actions, action_norm_stats=self.action_norm_stats
-        )
+        # server already un-normalized via training-time transform
+        raw_actions = np.array(response["data"]["actions"][0])  # (T, D)
 
         if self.action_ensemble:
             raw_actions = self.action_ensembler.ensemble_action(raw_actions)[None]
@@ -209,28 +204,11 @@ class ModelClient:
         return raw_action, action
 
     @staticmethod
-    def unnormalize_actions(normalized_actions: np.ndarray, action_norm_stats: Dict[str, np.ndarray]) -> np.ndarray:
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
-        normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1)
-        actions = np.where(
-            mask,
-            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
-            normalized_actions,
-        )
-
-        return actions
-
-    @staticmethod
     def get_action_stats(unnorm_key: str, policy_ckpt_path) -> dict:
-        """
-        Duplicate stats accessor (retained for backward compatibility).
-        """
-        policy_ckpt_path = Path(policy_ckpt_path)
-        model_config, norm_stats = read_mode_config(policy_ckpt_path)  # read config and norm_stats
-
-        # unnorm_key = baseframework._check_unnorm_key(norm_stats, unnorm_key) # This is also very environment-specific
+        """Retained for backward compatibility; not used in the new architecture."""
+        from pathlib import Path
+        from starVLA.model.tools import read_mode_config
+        model_config, norm_stats = read_mode_config(Path(policy_ckpt_path))
         return norm_stats[unnorm_key]["action"]
 
     def _resize_image(self, image: np.ndarray) -> np.ndarray:

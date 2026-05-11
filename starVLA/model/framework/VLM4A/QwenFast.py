@@ -23,7 +23,6 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 import torch
 from PIL import Image
-from tqdm import tqdm
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
 from starVLA.model.tools import FRAMEWORK_REGISTRY
@@ -58,27 +57,28 @@ class QwenFastDefaultConfig:
     name: str = "QwenFast"
 
     # === VLM backbone (Qwen2.5-VL / Qwen3-VL with action special tokens) ===
-    qwenvl: dict = field(default_factory=lambda: {
-        # Path to base VLM checkpoint (must include FAST action tokens)
-        "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action",
-        # Attention implementation: "flash_attention_2" | "eager" | "sdpa"
-        "attn_implementation": "flash_attention_2",
-    })
+    qwenvl: dict = field(
+        default_factory=lambda: {
+            # Path to base VLM checkpoint (must include FAST action tokens)
+            "base_vlm": "./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action",
+            # Attention implementation: "flash_attention_2" | "eager" | "sdpa"
+            "attn_implementation": "flash_attention_2",
+        }
+    )
 
     # === Action head (FAST tokenizer — discrete next-token prediction) ===
-    action_model: dict = field(default_factory=lambda: {
-        # Action head architecture type
-        "action_model_type": "FAST",
-        # Dimensionality of each action vector (e.g., 7 for 6-DoF + gripper)
-        "action_dim": 7,
-        # How many future steps to predict
-        "future_action_window_size": 15,
-        # How many past steps included in action chunk (usually 0)
-        "past_action_window_size": 0,
-    })
-
-    # === Observation image size (optional resize before encoding) ===
-    obs_image_size: Optional[list] = None
+    action_model: dict = field(
+        default_factory=lambda: {
+            # Action head architecture type
+            "action_model_type": "FAST",
+            # Dimensionality of each action vector (e.g., 7 for 6-DoF + gripper)
+            "action_dim": 7,
+            # How many future steps to predict
+            "future_action_window_size": 15,
+            # How many past steps included in action chunk (usually 0)
+            "past_action_window_size": 0,
+        }
+    )
 
 
 @FRAMEWORK_REGISTRY.register("QwenFast")
@@ -112,12 +112,14 @@ class Qwenvl_Fast(baseframework):
         self.qwen_vl_interface = get_vlm_model(config=self.config)
         self.action_model = get_action_model(config=self.config)
 
-        self.future_action_window_size = self.config.framework.action_model.future_action_window_size
-        self.past_action_window_size = self.config.framework.action_model.past_action_window_size
-        self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        # `action_horizon` is the single source of truth for chunk length.
+        # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
+        # are normalised upstream by `share_tools.apply_config_compat`, so we
+        # only ever read `action_horizon` here.
+        self.action_horizon = int(self.config.framework.action_model.action_horizon)
         # self.hidden_dim = config.framework.action_model.action_hidden_dim
 
-        self.action_model.fast_tokenizer.time_horizon = self.future_action_window_size + 1
+        self.action_model.fast_tokenizer.time_horizon = self.action_horizon
         self.action_model.fast_tokenizer.action_dim = self.config.framework.action_model.action_dim
 
     def forward(
@@ -196,7 +198,7 @@ class Qwenvl_Fast(baseframework):
         batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
 
-        # train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
+        # train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         # if train_obs_image_size:
         #     batch_images = resize_images(batch_images, target_size=train_obs_image_size)
         instructions = [instruction for instruction in instructions]
@@ -271,6 +273,7 @@ class Qwenvl_Fast(baseframework):
 
 if __name__ == "__main__":
     import argparse
+    import os
 
     from omegaconf import OmegaConf
 
@@ -278,69 +281,42 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()
 
-    try:
+    if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
-    except (ImportError, RuntimeError):
-        pass
 
-    args.config_yaml = "./examples/Robotwin/train_files/starvla_cotrain_robotwin.yaml"
     cfg = OmegaConf.load(args.config_yaml)
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 
-    # try get model
     model = Qwenvl_Fast(cfg)
     print(model)
 
-    # fake sample
     image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-    # Create a sample
     sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 14)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image, image],  # two views
+        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
+        "image": [image, image],
         "lang": "This is a fake instruction for testing.",
-        # "state" : np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16), # chunk, state_dim
     }
+    sample2 = sample.copy()
+    sample2["lang"] = "Another fake instruction for testing."
 
-    sample2 = {
-        "action": np.random.uniform(-1, 1, size=(16, 14)).astype(np.float16),  # action_chunk, action_dim
-        "image": [image, image],  # two views
-        "lang": "The fake instruction for testing.",
-        # "state" : np.random.uniform(-1, 1, size=(1, 7)).astype(np.float16), # chunk, state_dim
-    }
-
-    batch = [sample, sample2]  # batch size 2
+    batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     forward_output = model(batch)
     action_loss = forward_output["action_loss"]
     print(f"Action Loss: {action_loss.item()}")
 
-    # test predict action. for new model, it didn't learn to predict action token, so you would meet empty action
+    # Untrained models haven't learned the action tokens, so predictions may be empty.
     predict_output = model.predict_action([sample])
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
 
-    # # test with dataloader
-    # # can be fake sample， but here get from dataloader for simpler
-    # from starVLA.dataloader.lerobot_datasets import collate_fn, get_vla_dataset
-    # vla_dataset_cfg = cfg.datasets.vla_data
-    # vla_dataset_cfg.video_backend = "torchvision_av"
-    # dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
-    # from torch.utils.data import DataLoader
-    # train_dataloader = DataLoader(dataset, batch_size=2, num_workers=1, collate_fn=collate_fn)
-    # for batch in tqdm(train_dataloader, desc="Processing Batches"):
-    #     batch
-    #     break
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # model = model.to(device)
-    # model(batch)
-    # action = model.predict_action(batch[0])
     print("Finished")
