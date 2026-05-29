@@ -22,8 +22,8 @@ Key differences from CosmoPredict2GR00T:
   - 30 transformer blocks vs 28
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 _workspace_root = Path(__file__).parent.parent.parent.parent.parent
@@ -45,7 +45,10 @@ IGNORE_INDEX = -100
 
 from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import merge_framework_config
-from starVLA.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
+from starVLA.model.modules.action_model.GR00T_ActionHeader import (
+    FlowmatchingActionHead,
+    get_action_model,
+)
 from starVLA.model.modules.world_model import get_world_model
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.training.trainer_utils.trainer_tools import resize_images
@@ -60,8 +63,13 @@ class WanGR00TDefaultConfig:
     # === World Model backbone (Wan2.2-TI2V-5B-Diffusers) ===
     world_model: dict = field(
         default_factory=lambda: {
-            "base_wm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            "base_wm": (
+                "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+            ),
             "extract_layers": [-1],
+            # 0.0 = action-only (default); >0 enables co-training the DiT with
+            # a flow-matching video loss, weighted by this scalar.
+            "video_loss_weight": 0.0,
         }
     )
 
@@ -71,7 +79,9 @@ class WanGR00TDefaultConfig:
     # TODO next version should refactor to remove this redundant config section and update all shared utilities to read from world_model.base_wm instead of qwenvl.base_vlm.
     qwenvl: dict = field(
         default_factory=lambda: {
-            "base_vlm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            "base_vlm": (
+                "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+            ),
             "vl_hidden_dim": 3072,
         }
     )
@@ -134,26 +144,60 @@ class Wan_GR00T(baseframework):
 
         # Project world model features to action model's cross-attention dim
         wm_hidden = self.backbone.model.config.hidden_size
-        cross_attn_dim = self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim
+        cross_attn_dim = (
+            self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim
+        )
         self.wm_projector = torch.nn.Linear(wm_hidden, cross_attn_dim)
 
-        self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
+        self.action_model: FlowmatchingActionHead = get_action_model(
+            config=self.config
+        )
 
         # `action_horizon` is the single source of truth for chunk length.
         # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
         # are normalised upstream by `share_tools.apply_config_compat`, so we
         # only ever read `action_horizon` here.
-        self.action_horizon = int(self.config.framework.action_model.action_horizon)
+        self.action_horizon = int(
+            self.config.framework.action_model.action_horizon
+        )
 
     def forward(self, examples: List[dict] = None, **kwargs) -> Tuple:
-        batch_images = [example["image"] for example in examples]
-        instructions = [example["lang"] for example in examples]
         actions = [example["action"] for example in examples]
+        state = (
+            [example["state"] for example in examples]
+            if "state" in examples[0]
+            else None
+        )
 
-        state = [example["state"] for example in examples] if "state" in examples[0] else None
+        video_loss_weight = float(
+            self.config.framework.world_model.get("video_loss_weight", 0.0)
+        )
 
-        # Step 1: World model input encoding (UMT5 + VAE)
-        wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
+        # Step 1: World model input encoding
+        # Precomputed-latents path (LeRobotLatentDataset): skips VAE + UMT5.
+        # Live path (legacy): runs full encoding here.
+        if "latents" in examples[0]:
+            latents = torch.stack(
+                [torch.as_tensor(e["latents"]) for e in examples]
+            )
+            text_embeds = torch.stack(
+                [torch.as_tensor(e["text_emb"]) for e in examples]
+            )
+            wm_inputs = self.backbone.build_inputs(
+                latents=latents,
+                text_embeds=text_embeds,
+                noise_mode=video_loss_weight > 0,
+            )
+        else:
+            batch_images = [example["image"] for example in examples]
+            instructions = [example["lang"] for example in examples]
+            num_cameras = examples[0].get("num_cameras", 1)
+            wm_inputs = self.backbone.build_inputs(
+                images=batch_images,
+                instructions=instructions,
+                noise_mode=video_loss_weight > 0,
+                num_cameras=num_cameras,
+            )
 
         # Step 2: DiT forward to extract spatiotemporal features
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -168,45 +212,102 @@ class Wan_GR00T(baseframework):
 
         # Step 3: Action head forward and loss
         with torch.autocast("cuda", dtype=torch.float32):
-            actions = torch.tensor(np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype)
+            actions = torch.tensor(
+                np.array(actions),
+                device=last_hidden.device,
+                dtype=last_hidden.dtype,
+            )
             actions_target = actions[:, -self.action_horizon :, :]
 
             repeated_diffusion_steps = (
-                self.config.framework.action_model.get("repeated_diffusion_steps", 4)
+                self.config.framework.action_model.get(
+                    "repeated_diffusion_steps", 4
+                )
                 if self.config and hasattr(self.config, "framework")
                 else 4
             )
-            actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
-            last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
+            actions_target_repeated = actions_target.repeat(
+                repeated_diffusion_steps, 1, 1
+            )
+            last_hidden_repeated = last_hidden.repeat(
+                repeated_diffusion_steps, 1, 1
+            )
 
             state_repeated = None
             if state is not None:
-                state = torch.tensor(np.array(state), device=last_hidden.device, dtype=last_hidden.dtype)
+                state = torch.tensor(
+                    np.array(state),
+                    device=last_hidden.device,
+                    dtype=last_hidden.dtype,
+                )
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
+            action_loss = self.action_model(
+                last_hidden_repeated, actions_target_repeated, state_repeated
+            )
 
-        return {"action_loss": action_loss}
+        out = {"action_loss": action_loss}
+        if wm_outputs.loss is not None:
+            out["video_loss"] = video_loss_weight * wm_outputs.loss
+        return out
 
     def _prepare_inputs(self, examples: List[dict]):
         """Shared preprocessing — guarantees predict_action and generate_video see identical inputs."""
         if type(examples) is not list:
             examples = [examples]
-        batch_images = [to_pil_preserve(example["image"]) for example in examples]
+        batch_images = [
+            to_pil_preserve(example["image"]) for example in examples
+        ]
         instructions = [example["lang"] for example in examples]
-        state = [example["state"] for example in examples] if "state" in examples[0] else None
+        state = (
+            [example["state"] for example in examples]
+            if "state" in examples[0]
+            else None
+        )
 
-        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
+        train_obs_image_size = getattr(
+            self.config.datasets.vla_data, "obs_image_size", None
+        )
         if train_obs_image_size:
-            batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+            batch_images = resize_images(
+                batch_images, target_size=train_obs_image_size
+            )
 
         return batch_images, instructions, state
 
     @torch.inference_mode()
     def predict_action(self, examples: List[dict], **kwargs) -> np.ndarray:
-        batch_images, instructions, state = self._prepare_inputs(examples)
+        if type(examples) is not list:
+            examples = [examples]
 
-        wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
+        # Precomputed-latents path (training-time eval, LeRobotLatentDataset):
+        # skips VAE + UMT5. Mirrors the branching in self.forward.
+        # Live path (real-sim rollouts): goes through _prepare_inputs + VAE.
+        if "latents" in examples[0]:
+            state = (
+                [e["state"] for e in examples]
+                if "state" in examples[0]
+                else None
+            )
+            latents = torch.stack(
+                [torch.as_tensor(e["latents"]) for e in examples]
+            )
+            text_embeds = torch.stack(
+                [torch.as_tensor(e["text_emb"]) for e in examples]
+            )
+            wm_inputs = self.backbone.build_inputs(
+                latents=latents,
+                text_embeds=text_embeds,
+            )
+        else:
+            batch_images, instructions, state = self._prepare_inputs(examples)
+            num_cameras = examples[0].get("num_cameras", 1)
+            wm_inputs = self.backbone.build_inputs(
+                images=batch_images,
+                instructions=instructions,
+                num_cameras=num_cameras,
+            )
+
         with torch.autocast("cuda", dtype=torch.bfloat16):
             wm_outputs = self.backbone(
                 **wm_inputs,
@@ -217,7 +318,9 @@ class Wan_GR00T(baseframework):
             last_hidden = self.wm_projector(last_hidden)
 
         state = (
-            torch.from_numpy(np.array(state)).to(last_hidden.device, dtype=last_hidden.dtype)
+            torch.from_numpy(np.array(state)).to(
+                last_hidden.device, dtype=last_hidden.dtype
+            )
             if state is not None
             else None
         )
@@ -252,22 +355,15 @@ class Wan_GR00T(baseframework):
 
         device = next(self.backbone.transformer.parameters()).device
         generator = (
-            torch.Generator(device=device).manual_seed(seed) if seed is not None else None
+            torch.Generator(device=device).manual_seed(seed)
+            if seed is not None
+            else None
         )
 
         videos = []
         for i, (imgs, prompt) in enumerate(zip(batch_images, instructions)):
             cond_image = imgs[-1] if isinstance(imgs, list) else imgs
 
-            # TODO(human): invoke self.backbone.generate(...) for Wan2.2-TI2V.
-            # Decide:
-            #   1. Which Wan diffusers pipeline supports image conditioning here
-            #      (WanPipeline is text-only; WanImageToVideoPipeline takes `image=`).
-            #      You may need to update _Wan2_Interface.generate() to instantiate
-            #      the right pipeline class.
-            #   2. Which kwargs to forward: prompt, image, height, width, num_frames,
-            #      num_inference_steps, guidance_scale, generator, output_type="pil".
-            # Assign the per-sample frame list to `frames` for export below.
             result = self.backbone.generate(
                 image=cond_image,
                 prompt=prompt,
@@ -284,13 +380,19 @@ class Wan_GR00T(baseframework):
 
             if save_path is not None:
                 from diffusers.utils import export_to_video
-                output_path = save_path.format(idx=i) if "{idx}" in save_path else save_path
+
+                output_path = (
+                    save_path.format(idx=i)
+                    if "{idx}" in save_path
+                    else save_path
+                )
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 export_to_video(frames, output_path, fps=fps)
                 videos.append(output_path)
             else:
                 videos.append(frames)
         return {"videos": videos}
+
 
 if __name__ == "__main__":
     import argparse
@@ -317,24 +419,51 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config_yaml)
 
-    # Point to the diffusers-format model
-    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
-    cfg.framework.world_model = {
-        "base_wm": "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-        "extract_layers": [-1],
-    }
+    # Point to the diffusers-format model for this dev test.
+    cfg.framework.qwenvl.base_vlm = (
+        "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    )
+    cfg.framework.world_model.base_wm = (
+        "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    )
+    # This dev test feeds raw PIL frames (no precomputed latents available),
+    # so we need the live VAE + UMT5 path. Force-load the encoders even if
+    # the YAML was configured for precomputed-latents training.
+    cfg.framework.world_model.precomputed_latents_only = False
 
     model: Wan_GR00T = Wan_GR00T(cfg)
     print(model)
 
-    image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+    # --- Load a real libero frame + its instruction (libero_spatial ep 0) ---
+    import json
+
+    import imageio.v3 as iio
+
+    libero_root = Path(
+        "playground/Datasets/LEROBOT_LIBERO_DATA/libero_spatial_no_noops_1.0.0_lerobot"
+    )
+    episode_idx = 0
+    video_path = (
+        libero_root
+        / "videos/chunk-000/observation.images.image"
+        / f"episode_{episode_idx:06d}.mp4"
+    )
+    frame_np = iio.imread(str(video_path), index=0, plugin="pyav")
+    frame = Image.fromarray(frame_np)
+
+    episodes = [
+        json.loads(line)
+        for line in (libero_root / "meta/episodes.jsonl").open()
+    ]
+    instruction = episodes[episode_idx]["tasks"][0]
+    print(f"[libero ep{episode_idx}] {instruction!r}")
+
     sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 7)).astype(np.float16),
-        "image": [image, image],
-        "lang": "This is a fake instruction for testing.",
+        "action": np.zeros((16, 7), dtype=np.float16),
+        "image": [frame, frame],
+        "lang": instruction,
     }
     sample2 = sample.copy()
-    sample2["lang"] = "Another fake instruction for testing."
 
     batch = [sample, sample2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -342,21 +471,25 @@ if __name__ == "__main__":
     forward_output = model(batch)
     action_loss = forward_output["action_loss"]
     print(f"Action Loss: {action_loss.item()}")
+    if "video_loss" in forward_output:
+        print(f"Video Loss:  {forward_output['video_loss'].item():.4f}")
 
     predict_output = model.predict_action(examples=[sample])
     normalized_actions = predict_output["normalized_actions"]
     print(f"Unnormalized Action: {normalized_actions}")
 
-    # Test generate_video
+    # Test generate_video — Quick preset: 4 steps, 49 frames, 480x832
     print("Testing generate_video...")
     video_output = model.generate_video(
         examples=[sample],
-        num_frames=121,
-        num_inference_steps=4,
+        num_frames=49,
+        num_inference_steps=50,
         guidance_scale=5.0,
         seed=42,
-        save_path="results/imagined/wan_test_episode0.mp4",
+        save_path="results/imagined/wan_libero_spatial_ep0.mp4",
         fps=8,
+        height=480,
+        width=832,
     )
     print(f"Generated video saved to: {video_output['videos']}")
 

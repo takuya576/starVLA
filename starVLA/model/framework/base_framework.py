@@ -258,6 +258,17 @@ class baseframework(PreTrainedModel):
         model_config = config
         model_config.trainer.pretrained_checkpoint = None
 
+        # Override training-only flags that don't apply at inference time.
+        # precomputed_latents_only is a *training* memory optimization (skip
+        # loading VAE / UMT5 because the dataloader serves precomputed latents).
+        # At inference we need live encoders to process raw camera frames, so
+        # force-load them by neutralizing the flag here.
+        wm_cfg = getattr(model_config.framework, "world_model", None)
+        if wm_cfg is not None and getattr(
+            wm_cfg, "precomputed_latents_only", False
+        ):
+            wm_cfg.precomputed_latents_only = False
+
         FrameworkModel = build_framework(cfg=model_config)
         # set for action un-norm
         FrameworkModel.norm_stats = norm_stats
@@ -275,21 +286,45 @@ class baseframework(PreTrainedModel):
         # logger.info(f"Loading model weights from `{pretrained_checkpoint}`")
         model_keys = set(FrameworkModel.state_dict().keys())
         checkpoint_keys = set(model_state_dict.keys())
-        try:
-            FrameworkModel.load_state_dict(model_state_dict, strict=True)
-        except RuntimeError as e:
-            # must keep all keys matched
-            common_keys = model_keys.intersection(checkpoint_keys)
-            missing_keys = model_keys - common_keys
-            unexpected_keys = checkpoint_keys - common_keys
-            if missing_keys:
-                logger.warning(f"Missing keys in state_dict: {missing_keys}")
+        # Allow missing keys for modules that are *frozen during training and
+        # provided fresh from upstream pretrained weights at __init__ time*
+        # (e.g. when training with precomputed_latents_only=True the checkpoint
+        # contains no VAE / text_encoder, but the eval-time model loads them
+        # from the original Wan2.2 directory and they are bit-identical to
+        # what would have been saved).
+        # NOTE: if these module names get renamed, update this allowlist too.
+        ALLOWED_MISSING_PREFIXES = (
+            "backbone.vae.",
+            "backbone.text_encoder.",
+        )
+        load_result = FrameworkModel.load_state_dict(
+            model_state_dict, strict=False
+        )
+        missing_keys = list(load_result.missing_keys)
+        unexpected_keys = list(load_result.unexpected_keys)
+        missing_strict = [
+            k
+            for k in missing_keys
+            if not any(k.startswith(p) for p in ALLOWED_MISSING_PREFIXES)
+        ]
+        missing_allowed = [k for k in missing_keys if k not in missing_strict]
+        if missing_allowed:
+            logger.info(
+                f"Missing keys (allowed — supplied by upstream pretrained "
+                f"weights at __init__): {len(missing_allowed)} keys under "
+                f"{ALLOWED_MISSING_PREFIXES}"
+            )
+        if missing_strict or unexpected_keys:
+            if missing_strict:
+                logger.warning(f"Missing keys in state_dict: {missing_strict}")
             if unexpected_keys:
                 logger.warning(
                     f"Unexpected keys in state_dict: {unexpected_keys}"
                 )
-
-            raise e
+            raise RuntimeError(
+                f"Checkpoint key mismatch — missing: {missing_strict}, "
+                f"unexpected: {unexpected_keys}"
+            )
 
         # **ensure model is on GPU**
         FrameworkModel = FrameworkModel

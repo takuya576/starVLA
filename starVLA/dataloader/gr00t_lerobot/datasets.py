@@ -1372,9 +1372,9 @@ class LeRobotSingleDataset(Dataset):
         """Pack transformed modality data into training sample format."""
         step_images = []
         for video_key in self.modality_keys["video"]:
-            image = data[video_key][0]
-            image = Image.fromarray(image).resize((224, 224))
-            step_images.append(image)
+            # Keep all T frames (camera-major); T=1 matches old [0] behaviour.
+            for frame in data[video_key]:
+                step_images.append(Image.fromarray(frame).resize((224, 224)))
 
         language = data[self.modality_keys["language"][0]][0]
         action = []
@@ -1386,7 +1386,9 @@ class LeRobotSingleDataset(Dataset):
             "action": action,
             "image": step_images,
             "lang": language,
-            "robot_tag": self.tag
+            "robot_tag": self.tag,
+            # Cameras in step_images (camera-major); lets the WM split the clip.
+            "num_cameras": len(self.modality_keys["video"]),
         }
 
         if self.data_cfg is not None and self.data_cfg.get("include_state", False) not in ["False", False]:

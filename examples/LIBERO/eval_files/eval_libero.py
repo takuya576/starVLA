@@ -38,9 +38,13 @@ class Args:
     task_suite_name: str = (
         "libero_goal"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     )
-    num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
+    num_steps_wait: int = (
+        10  # Number of steps to wait for objects to stabilize i n sim
+    )
     num_trials_per_task: int = 50  # Number of rollouts per task
-    max_tasks: int = -1  # If > 0, limit the number of tasks evaluated (smoke / quick check). -1 = run all.
+    max_tasks: int = (
+        -1
+    )  # If > 0, limit the number of tasks evaluated (smoke / quick check). -1 = run all.
 
     #################################################################################################################
     # Utils
@@ -60,7 +64,9 @@ class Args:
 
 
 def eval_libero(args: Args) -> None:
-    logging.info(f"Arguments: {json.dumps(dataclasses.asdict(args), indent=4)}")
+    logging.info(
+        f"Arguments: {json.dumps(dataclasses.asdict(args), indent=4)}"
+    )
 
     # Set random seed
     np.random.seed(args.seed)
@@ -95,8 +101,14 @@ def eval_libero(args: Args) -> None:
     )
 
     # Optional smoke-test cap (still useful for quick verification with -1 = full run).
-    n_eval_tasks = num_tasks_in_suite if args.max_tasks <= 0 else min(args.max_tasks, num_tasks_in_suite)
-    logging.info(f"Evaluating {n_eval_tasks} of {num_tasks_in_suite} tasks (max_tasks={args.max_tasks})")
+    n_eval_tasks = (
+        num_tasks_in_suite
+        if args.max_tasks <= 0
+        else min(args.max_tasks, num_tasks_in_suite)
+    )
+    logging.info(
+        f"Evaluating {n_eval_tasks} of {num_tasks_in_suite} tasks (max_tasks={args.max_tasks})"
+    )
 
     # Start evaluation
     total_episodes, total_successes = 0, 0
@@ -108,7 +120,9 @@ def eval_libero(args: Args) -> None:
         initial_states = task_suite.get_task_init_states(task_id)
 
         # Initialize LIBERO environment and task description
-        env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
+        env, task_description = _get_libero_env(
+            task, LIBERO_ENV_RESOLUTION, args.seed
+        )
 
         # Start episodes
         task_episodes, task_successes = 0, 0
@@ -116,7 +130,9 @@ def eval_libero(args: Args) -> None:
             logging.info(f"\nTask: {task_description}")
 
             # Reset environment
-            client_model.reset(task_description=task_description)  # Reset the client connection
+            client_model.reset(
+                task_description=task_description
+            )  # Reset the client connection
             env.reset()
 
             # Set initial states
@@ -143,7 +159,9 @@ def eval_libero(args: Args) -> None:
 
                 # IMPORTANT: rotate 180 degrees to match train preprocessing
                 img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-                wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
+                wrist_img = np.ascontiguousarray(
+                    obs["robot0_eye_in_hand_image"][::-1, ::-1]
+                )
 
                 # Save preprocessed image for replay video
                 replay_images.append(img)
@@ -157,16 +175,26 @@ def eval_libero(args: Args) -> None:
                 )
 
                 observation = {  #
-                    "observation.primary": np.expand_dims(img, axis=0),  # (H, W, C), dtype=unit8, range(0-255)
-                    "observation.wrist_image": np.expand_dims(wrist_img, axis=0),  # (H, W, C)
+                    "observation.primary": np.expand_dims(
+                        img, axis=0
+                    ),  # (H, W, C), dtype=unit8, range(0-255)
+                    "observation.wrist_image": np.expand_dims(
+                        wrist_img, axis=0
+                    ),  # (H, W, C)
                     "observation.state": np.expand_dims(state, axis=0),
                     "instruction": [str(task_description)],
                 }
 
                 # align key with model API --> two images provided here --> check training
+                images = [
+                    observation["observation.primary"][0],
+                    observation["observation.wrist_image"][0],
+                ]
                 example_dict = {
-                    "image": [observation["observation.primary"][0], observation["observation.wrist_image"][0]],
+                    "image": images,
                     "lang": observation["instruction"][0],
+                    # 1 frame per camera at deploy → num_cameras == len(images).
+                    "num_cameras": len(images),
                 }
 
                 start_time = time.time()
@@ -174,17 +202,27 @@ def eval_libero(args: Args) -> None:
                 response = client_model.step(example=example_dict, step=step)
 
                 end_time = time.time()
-                # print(f"time: {end_time - start_time}")
+                print(f"time: {end_time - start_time}")
 
                 # #
                 raw_action = response["raw_action"]
 
-                world_vector_delta = np.asarray(raw_action.get("world_vector"), dtype=np.float32).reshape(-1)
-                rotation_delta = np.asarray(raw_action.get("rotation_delta"), dtype=np.float32).reshape(-1)
-                open_gripper = np.asarray(raw_action.get("open_gripper"), dtype=np.float32).reshape(-1)
+                world_vector_delta = np.asarray(
+                    raw_action.get("world_vector"), dtype=np.float32
+                ).reshape(-1)
+                rotation_delta = np.asarray(
+                    raw_action.get("rotation_delta"), dtype=np.float32
+                ).reshape(-1)
+                open_gripper = np.asarray(
+                    raw_action.get("open_gripper"), dtype=np.float32
+                ).reshape(-1)
                 gripper = _binarize_gripper_open(open_gripper)
 
-                if not (world_vector_delta.size == 3 and rotation_delta.size == 3 and open_gripper.size == 1):
+                if not (
+                    world_vector_delta.size == 3
+                    and rotation_delta.size == 3
+                    and open_gripper.size == 1
+                ):
                     logging.warning(
                         f"Unexpected action sizes: "
                         f"wv={world_vector_delta.shape}, rot={rotation_delta.shape}, grip={gripper.shape}. "
@@ -195,7 +233,9 @@ def eval_libero(args: Args) -> None:
                         f"rotation_delta={rotation_delta.shape}, gripper={gripper.shape}"
                     )
                 else:
-                    delta_action = np.concatenate([world_vector_delta, rotation_delta, gripper], axis=0)
+                    delta_action = np.concatenate(
+                        [world_vector_delta, rotation_delta, gripper], axis=0
+                    )
 
                 full_actions.append(delta_action)
 
@@ -216,7 +256,8 @@ def eval_libero(args: Args) -> None:
             suffix = "success" if done else "failure"
             task_segment = task_description.replace(" ", "_")
             imageio.mimwrite(
-                pathlib.Path(args.video_out_path) / f"rollout_{task_segment}_episode{episode_idx}_{suffix}.mp4",
+                pathlib.Path(args.video_out_path)
+                / f"rollout_{task_segment}_episode{episode_idx}_{suffix}.mp4",
                 [np.asarray(x) for x in replay_images],
                 fps=10,
             )
@@ -228,27 +269,41 @@ def eval_libero(args: Args) -> None:
             # Log current results
             logging.info(f"Success: {done}")
             logging.info(f"# episodes completed so far: {total_episodes}")
-            logging.info(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)")
+            logging.info(
+                f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)"
+            )
 
         # Log final results
-        logging.info(f"Current task success rate: {float(task_successes) / float(task_episodes)}")
-        logging.info(f"Current total success rate: {float(total_successes) / float(total_episodes)}")
+        logging.info(
+            f"Current task success rate: {float(task_successes) / float(task_episodes)}"
+        )
+        logging.info(
+            f"Current total success rate: {float(total_successes) / float(total_episodes)}"
+        )
 
-    logging.info(f"Total success rate: {float(total_successes) / float(total_episodes)}")
+    logging.info(
+        f"Total success rate: {float(total_successes) / float(total_episodes)}"
+    )
     logging.info(f"Total episodes: {total_episodes}")
 
 
 def _get_libero_env(task, resolution, seed):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
-    task_bddl_file = pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
+    task_bddl_file = (
+        pathlib.Path(get_libero_path("bddl_files"))
+        / task.problem_folder
+        / task.bddl_file
+    )
     env_args = {
         "bddl_file_name": task_bddl_file,
         "camera_heights": resolution,
         "camera_widths": resolution,
     }
     env = OffScreenRenderEnv(**env_args)
-    env.seed(seed)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
+    env.seed(
+        seed
+    )  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
     return env, task_description
 
 

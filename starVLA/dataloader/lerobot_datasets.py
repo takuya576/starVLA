@@ -37,9 +37,16 @@ def make_LeRobotSingleDataset(
     """
 
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
-    modality_config = data_config.modality_config()
+    modality_configs = data_config.modality_config()
     transforms = data_config.transform()
     dataset_path = data_root_dir / data_name
+
+    # World-Model on-the-fly mode: widen the VIDEO modality to an explicit
+    # `video_indices` clip (decoupled from observation_indices, so state/language
+    # stay single-step). Unset keeps normal VLA behaviour.
+    video_indices = data_cfg.get("video_indices", None) if data_cfg else None
+    if video_indices:
+        modality_configs["video"].delta_indices = list(video_indices)
     if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
         print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
@@ -47,15 +54,40 @@ def make_LeRobotSingleDataset(
         embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
 
     video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
-    return LeRobotSingleDataset(
+    common_kwargs = dict(
         dataset_path=dataset_path,
-        modality_configs=modality_config,
+        modality_configs=modality_configs,
         transforms=transforms,
         embodiment_tag=embodiment_tag,
         video_backend=video_backend, # decord is more efficiency | torchvision_av for video.av1
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
+
+    # Optional: instantiate LeRobotLatentDataset (subclass) to serve pre-extracted
+    # Wan VAE latents + UMT5 text embeds instead of raw frames. Triggered by
+    # `use_precomputed_latents: true` in data_cfg.
+    if data_cfg and data_cfg.get("use_precomputed_latents", False):
+        from starVLA.dataloader.lerobot_latent_datasets import LeRobotLatentDataset
+        latent_chunk_dir = dataset_path / "latents" / "chunk-000"
+        assert latent_chunk_dir.is_dir(), (
+            f"use_precomputed_latents=true but {latent_chunk_dir} is missing. "
+            f"Expected structure: <dataset>/latents/chunk-000/<cam_key>/episode_*.pth"
+        )
+        # Auto-detect cameras under the latent chunk dir if not specified.
+        video_keys = data_cfg.get("latent_video_keys", None)
+        if video_keys is None:
+            video_keys = sorted(
+                d.name for d in latent_chunk_dir.iterdir() if d.is_dir()
+            )
+        return LeRobotLatentDataset(
+            latent_root=latent_chunk_dir,
+            video_keys=video_keys,
+            window_latent=int(data_cfg.get("window_latent", 30)),
+            **common_kwargs,
+        )
+
+    return LeRobotSingleDataset(**common_kwargs)
 
 def get_vla_dataset(
     data_cfg: dict,

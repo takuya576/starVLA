@@ -260,9 +260,6 @@ class VLATrainer(TrainerUtils):
                 logger.info("📊 Saving accessed configuration...")
                 output_dir = Path(self.config.output_dir)
                 self.config.save_accessed_config(output_dir / "config.yaml", use_original_values=False)
-                full_cfg_path = output_dir / "config.full.yaml"
-                logger.info(f"📦 Saving full merged configuration to `{full_cfg_path}`...")
-                self.config.save_full_config(full_cfg_path)
                 logger.info("✅ Configuration files saved")
 
         self.accelerator.wait_for_everyone()
@@ -383,6 +380,11 @@ class VLATrainer(TrainerUtils):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 total_loss = action_loss
+                # WanGR00T returns video_loss (already weighted by
+                # video_loss_weight) when cotrain is enabled. Add it
+                # explicitly so the world model receives gradient signal.
+                if "video_loss" in output_dict:
+                    total_loss = total_loss + output_dict["video_loss"]
 
             self.accelerator.backward(total_loss)
 
@@ -398,9 +400,10 @@ class VLATrainer(TrainerUtils):
             if self.accelerator.sync_gradients:
                 self.lr_scheduler.step()
 
-        return {
-            "action_dit_loss": action_loss.item(),
-        }
+        metrics = {"action_dit_loss": action_loss.item()}
+        if "video_loss" in output_dict:
+            metrics["video_loss"] = output_dict["video_loss"].item()
+        return metrics
 
     def _finalize_training(self):
         """Training end processing."""
