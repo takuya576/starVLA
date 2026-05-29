@@ -191,7 +191,7 @@ class Wan_GR00T(baseframework):
         else:
             batch_images = [example["image"] for example in examples]
             instructions = [example["lang"] for example in examples]
-            num_cameras = examples[0].get("num_cameras", 1)
+            num_cameras = examples[0]["num_cameras"]
             wm_inputs = self.backbone.build_inputs(
                 images=batch_images,
                 instructions=instructions,
@@ -301,7 +301,7 @@ class Wan_GR00T(baseframework):
             )
         else:
             batch_images, instructions, state = self._prepare_inputs(examples)
-            num_cameras = examples[0].get("num_cameras", 1)
+            num_cameras = examples[0]["num_cameras"]
             wm_inputs = self.backbone.build_inputs(
                 images=batch_images,
                 instructions=instructions,
@@ -460,8 +460,9 @@ if __name__ == "__main__":
 
     sample = {
         "action": np.zeros((16, 7), dtype=np.float16),
-        "image": [frame, frame],
+        "image": [frame, frame],  # 2 cameras (primary + wrist)
         "lang": instruction,
+        "num_cameras": 2,
     }
     sample2 = sample.copy()
 
