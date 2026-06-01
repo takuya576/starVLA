@@ -47,6 +47,13 @@ def make_LeRobotSingleDataset(
     video_indices = data_cfg.get("video_indices", None) if data_cfg else None
     if video_indices:
         modality_configs["video"].delta_indices = list(video_indices)
+
+    # Subset the cameras actually loaded (drives num_cameras downstream).
+    # Unset → all of the robot's cameras.
+    video_camera_keys = data_cfg.get("video_camera_keys", None) if data_cfg else None
+    if video_camera_keys:
+        modality_configs["video"].modality_keys = list(video_camera_keys)
+
     if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
         print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
