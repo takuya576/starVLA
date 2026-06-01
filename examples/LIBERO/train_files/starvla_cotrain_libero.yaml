@@ -10,8 +10,7 @@ framework:
   name: WanGR00T
   world_model:
     base_wm: ./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers
-    video_loss_weight: 0              # >0 enables flow-matching video co-training
-    precomputed_latents_only: false   # true skips VAE & UMT5 load (precomputed path only)
+    video_loss_weight: 0.1              # >0 enables flow-matching video co-training
     vae_height: 224                   # live VAE encode res (224 fits 16-frame/2-cam seq_len)
     vae_width: 224
   qwenvl:
@@ -41,11 +40,9 @@ datasets:
     dataset_py: lerobot_datasets
     data_root_dir: playground/Datasets/robbyant
     data_mix: libero_long # libero_goal
-    use_precomputed_latents: false
     # On-the-fly WM: decode a multi-frame clip for live VAE encoding.
     video_indices: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-    # video_camera_keys: ["video.primary_image"]   # subset cameras; default = all
-    window_latent: 30                 # precomputed-path only; ignored when live
+    video_camera_keys: ["video.primary_image", "video.wrist_image"]   # subset cameras; default = all
     action_type: delta_qpos
     sequential_step_sampling: False
     CoT_prompt: "Your task is {instruction}. To identify the key objects for your task. Locate their bounding boxes in [x1,y1,x2,y2] format."

@@ -173,31 +173,16 @@ class Wan_GR00T(baseframework):
             self.config.framework.world_model.get("video_loss_weight", 0.0)
         )
 
-        # Step 1: World model input encoding
-        # Precomputed-latents path (LeRobotLatentDataset): skips VAE + UMT5.
-        # Live path (legacy): runs full encoding here.
-        if "latents" in examples[0]:
-            latents = torch.stack(
-                [torch.as_tensor(e["latents"]) for e in examples]
-            )
-            text_embeds = torch.stack(
-                [torch.as_tensor(e["text_emb"]) for e in examples]
-            )
-            wm_inputs = self.backbone.build_inputs(
-                latents=latents,
-                text_embeds=text_embeds,
-                noise_mode=video_loss_weight > 0,
-            )
-        else:
-            batch_images = [example["image"] for example in examples]
-            instructions = [example["lang"] for example in examples]
-            num_cameras = examples[0]["num_cameras"]
-            wm_inputs = self.backbone.build_inputs(
-                images=batch_images,
-                instructions=instructions,
-                noise_mode=video_loss_weight > 0,
-                num_cameras=num_cameras,
-            )
+        # Step 1: World model input encoding (live VAE + UMT5)
+        batch_images = [example["image"] for example in examples]
+        instructions = [example["lang"] for example in examples]
+        num_cameras = examples[0]["num_cameras"]
+        wm_inputs = self.backbone.build_inputs(
+            images=batch_images,
+            instructions=instructions,
+            noise_mode=video_loss_weight > 0,
+            num_cameras=num_cameras,
+        )
 
         # Step 2: DiT forward to extract spatiotemporal features
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -280,33 +265,14 @@ class Wan_GR00T(baseframework):
         if type(examples) is not list:
             examples = [examples]
 
-        # Precomputed-latents path (training-time eval, LeRobotLatentDataset):
-        # skips VAE + UMT5. Mirrors the branching in self.forward.
-        # Live path (real-sim rollouts): goes through _prepare_inputs + VAE.
-        if "latents" in examples[0]:
-            state = (
-                [e["state"] for e in examples]
-                if "state" in examples[0]
-                else None
-            )
-            latents = torch.stack(
-                [torch.as_tensor(e["latents"]) for e in examples]
-            )
-            text_embeds = torch.stack(
-                [torch.as_tensor(e["text_emb"]) for e in examples]
-            )
-            wm_inputs = self.backbone.build_inputs(
-                latents=latents,
-                text_embeds=text_embeds,
-            )
-        else:
-            batch_images, instructions, state = self._prepare_inputs(examples)
-            num_cameras = examples[0]["num_cameras"]
-            wm_inputs = self.backbone.build_inputs(
-                images=batch_images,
-                instructions=instructions,
-                num_cameras=num_cameras,
-            )
+        # Live VAE + UMT5 encoding from raw frames.
+        batch_images, instructions, state = self._prepare_inputs(examples)
+        num_cameras = examples[0]["num_cameras"]
+        wm_inputs = self.backbone.build_inputs(
+            images=batch_images,
+            instructions=instructions,
+            num_cameras=num_cameras,
+        )
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             wm_outputs = self.backbone(
@@ -426,10 +392,6 @@ if __name__ == "__main__":
     cfg.framework.world_model.base_wm = (
         "./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
     )
-    # This dev test feeds raw PIL frames (no precomputed latents available),
-    # so we need the live VAE + UMT5 path. Force-load the encoders even if
-    # the YAML was configured for precomputed-latents training.
-    cfg.framework.world_model.precomputed_latents_only = False
 
     model: Wan_GR00T = Wan_GR00T(cfg)
     print(model)

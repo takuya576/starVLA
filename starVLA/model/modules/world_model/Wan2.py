@@ -66,13 +66,6 @@ class _Wan2_Interface(nn.Module):
         )
         self.config = config
 
-        # When set, skip loading the UMT5 text_encoder + AutoencoderKLWan VAE.
-        # Training with LeRobotLatentDataset doesn't need them (latents and
-        # text_emb are precomputed on disk), and skipping the load frees
-        # ~22 GB of VRAM for the DiT and its activations.
-        # NOTE: predict_action / generate_video become unavailable in this mode.
-        precomputed_only = wm_cfg.get("precomputed_latents_only", False)
-
         from diffusers import (
             AutoencoderKLWan,
             UniPCMultistepScheduler,
@@ -83,16 +76,12 @@ class _Wan2_Interface(nn.Module):
         logger.info(f"Loading Wan2.2-TI2V from {model_name}")
 
         # --- Text encoder: UMT5-XXL ---
-        if precomputed_only:
-            self.tokenizer = None
-            self.text_encoder = None
-        else:
-            self.tokenizer = T5TokenizerFast.from_pretrained(
-                model_name, subfolder="tokenizer"
-            )
-            self.text_encoder = UMT5EncoderModel.from_pretrained(
-                model_name, subfolder="text_encoder", torch_dtype=torch.bfloat16
-            )
+        self.tokenizer = T5TokenizerFast.from_pretrained(
+            model_name, subfolder="tokenizer"
+        )
+        self.text_encoder = UMT5EncoderModel.from_pretrained(
+            model_name, subfolder="text_encoder", torch_dtype=torch.bfloat16
+        )
 
         # --- DiT transformer ---
         self.transformer = WanTransformer3DModel.from_pretrained(
@@ -100,12 +89,9 @@ class _Wan2_Interface(nn.Module):
         )
 
         # --- VAE (image → latents for DiT input, z_dim=48) ---
-        if precomputed_only:
-            self.vae = None
-        else:
-            self.vae = AutoencoderKLWan.from_pretrained(
-                model_name, subfolder="vae", torch_dtype=torch.bfloat16
-            )
+        self.vae = AutoencoderKLWan.from_pretrained(
+            model_name, subfolder="vae", torch_dtype=torch.bfloat16
+        )
 
         # --- Scheduler ---
         # CRITICAL: use_flow_sigmas=True makes UniPC's add_noise() use FM math:
@@ -125,28 +111,19 @@ class _Wan2_Interface(nn.Module):
         # Use diffusers' VideoProcessor for image/video preprocessing (resize, normalize, etc.)
         from diffusers.video_processor import VideoProcessor
 
-        if self.vae is not None:
-            self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample)
-            self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample)
-            self.video_processor = VideoProcessor(
-                vae_scale_factor=self.vae_scale_factor_spatial
-            )
-        else:
-            # Wan2.2 VAE hardcoded specs (16x spatial, 4x temporal). Used as
-            # constants when precomputed_only=True since the VAE isn't loaded.
-            self.vae_scale_factor_spatial = 16
-            self.vae_scale_factor_temporal = 4
-            self.video_processor = None
+        self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample)
+        self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample)
+        self.video_processor = VideoProcessor(
+            vae_scale_factor=self.vae_scale_factor_spatial
+        )
 
         # Live VAE encode resolution (default = Wan pretrained 480x832).
         self._vae_height = wm_cfg.get("vae_height", 480)
         self._vae_width = wm_cfg.get("vae_width", 832)
 
         # Co-training: only DiT (WanTransformer3D) receives gradients; VAE & UMT5 frozen.
-        if self.vae is not None:
-            self.vae.requires_grad_(False)
-        if self.text_encoder is not None:
-            self.text_encoder.requires_grad_(False)
+        self.vae.requires_grad_(False)
+        self.text_encoder.requires_grad_(False)
 
         # DiT: 24 heads × 128 dim = 3072
         self._hidden_size = (
@@ -230,8 +207,7 @@ class _Wan2_Interface(nn.Module):
 
         `images` is camera-major per sample: [cam0_t0..tN, cam1_t0..tN, ...].
         Each camera is VAE-encoded separately via _encode_one_camera, then
-        width-concatenated (matches LeRobotLatentDataset's precomputed fusion).
-        num_cameras=1 → single clip, identical to original behaviour.
+        width-concatenated. num_cameras=1 → single clip, identical to original.
 
         Returns:
             latents: [B, 48, T_latent, H/16, (W/16)*num_cameras]
@@ -367,8 +343,6 @@ class _Wan2_Interface(nn.Module):
         images=None,
         instructions=None,
         *,
-        latents=None,
-        text_embeds=None,
         noise_mode: bool = False,
         num_cameras: int = 1,
         **kwargs,
@@ -382,9 +356,6 @@ class _Wan2_Interface(nn.Module):
         Note: No CLIP image conditioning — this diffusers variant uses
         expand_timesteps mode (per-token timesteps) instead.
 
-        Precomputed-input shortcut: if `latents` + `text_embeds` are supplied,
-        VAE and UMT5 are skipped entirely. Used with LeRobotLatentDataset.
-
         Args:
             noise_mode: If True, inject flow-matching noise (training co-train path).
                 If False (default), feed clean latents at timestep=0 (inference / legacy).
@@ -392,15 +363,10 @@ class _Wan2_Interface(nn.Module):
         Returns:
             dict with keys matching forward() expectations
         """
-        if latents is None or text_embeds is None:
-            assert images is not None and instructions is not None
-            assert len(images) == len(instructions)
-            text_embeds = self._encode_text(instructions)
-            latents = self._encode_cameras(images, num_cameras=num_cameras)
-        else:
-            device = next(self.transformer.parameters()).device
-            latents = latents.to(device=device, dtype=torch.bfloat16)
-            text_embeds = text_embeds.to(device=device, dtype=torch.bfloat16)
+        assert images is not None and instructions is not None
+        assert len(images) == len(instructions)
+        text_embeds = self._encode_text(instructions)
+        latents = self._encode_cameras(images, num_cameras=num_cameras)
 
         p_t, p_h, p_w = self.transformer.config.patch_size
         _, _, T, H, W = latents.shape
@@ -507,7 +473,9 @@ class _Wan2_Interface(nn.Module):
             frame_mask = torch.ones_like(target)
             frame_mask[:, :, 0] = 0.0
             sq_err = (pred.float() - target.float().detach()) ** 2
-            video_loss = (sq_err * frame_mask).sum() / frame_mask.sum().clamp_min(1.0)
+            video_loss = (
+                sq_err * frame_mask
+            ).sum() / frame_mask.sum().clamp_min(1.0)
 
         class _WMOutput:
             def __init__(self, hidden_states_tuple, loss=None):

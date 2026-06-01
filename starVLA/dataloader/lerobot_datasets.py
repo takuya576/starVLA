@@ -54,7 +54,7 @@ def make_LeRobotSingleDataset(
         embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
 
     video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
-    common_kwargs = dict(
+    return LeRobotSingleDataset(
         dataset_path=dataset_path,
         modality_configs=modality_configs,
         transforms=transforms,
@@ -63,31 +63,6 @@ def make_LeRobotSingleDataset(
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
-
-    # Optional: instantiate LeRobotLatentDataset (subclass) to serve pre-extracted
-    # Wan VAE latents + UMT5 text embeds instead of raw frames. Triggered by
-    # `use_precomputed_latents: true` in data_cfg.
-    if data_cfg and data_cfg.get("use_precomputed_latents", False):
-        from starVLA.dataloader.lerobot_latent_datasets import LeRobotLatentDataset
-        latent_chunk_dir = dataset_path / "latents" / "chunk-000"
-        assert latent_chunk_dir.is_dir(), (
-            f"use_precomputed_latents=true but {latent_chunk_dir} is missing. "
-            f"Expected structure: <dataset>/latents/chunk-000/<cam_key>/episode_*.pth"
-        )
-        # Auto-detect cameras under the latent chunk dir if not specified.
-        video_keys = data_cfg.get("latent_video_keys", None)
-        if video_keys is None:
-            video_keys = sorted(
-                d.name for d in latent_chunk_dir.iterdir() if d.is_dir()
-            )
-        return LeRobotLatentDataset(
-            latent_root=latent_chunk_dir,
-            video_keys=video_keys,
-            window_latent=int(data_cfg.get("window_latent", 30)),
-            **common_kwargs,
-        )
-
-    return LeRobotSingleDataset(**common_kwargs)
 
 def get_vla_dataset(
     data_cfg: dict,

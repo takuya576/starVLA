@@ -4,8 +4,11 @@ Run from repo root:
     python examples/LIBERO/train_files/smoke_test_wan_cotrain.py \
         --config_yaml examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 
+Exercises the on-the-fly path: live VAE+UMT5 encoding of a multi-frame,
+multi-camera clip. Forces video_loss_weight > 0 so the co-train path runs.
+
 What it checks (in order — bails on first failure):
-  1. Dataset yields {latents, text_emb, action, ...} with sane shapes.
+  1. Dataset yields a camera-major PIL clip + num_cameras with sane counts.
   2. WanGR00T.forward returns {action_loss, video_loss} as finite scalars.
   3. Backward through the summed loss reaches the DiT and only the DiT.
   4. predict_action returns normalized_actions of shape [B, horizon, dim]
@@ -36,6 +39,11 @@ def main():
 
     cfg = OmegaConf.load(args.config_yaml)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Force the video loss on so the co-train path is exercised regardless of
+    # the training YAML value (which may be 0 during an action-only warmup).
+    if float(cfg.framework.world_model.get("video_loss_weight", 0.0)) <= 0:
+        cfg.framework.world_model.video_loss_weight = 0.1
     print(f"[smoke] device={device}")
 
     # ------------------------------------------------------------------
@@ -44,27 +52,19 @@ def main():
     print("\n[1/3] Dataset smoke")
     dataset = get_vla_dataset(data_cfg=cfg.datasets.vla_data)
     sample = dataset[0]
-
-    assert "latents" in sample, (
-        "Sample missing 'latents'. Did you set "
-        "datasets.vla_data.use_precomputed_latents: true?"
-    )
-    assert "text_emb" in sample, "Sample missing 'text_emb'."
     assert "action" in sample, "Sample missing 'action'."
 
-    latents = sample["latents"]
-    text_emb = sample["text_emb"]
-    print(f"  latents : {tuple(latents.shape)} {latents.dtype}")
-    print(f"  text_emb: {tuple(text_emb.shape)} {text_emb.dtype}")
+    # On-the-fly path: dataset serves a camera-major PIL clip + num_cameras.
+    assert "image" in sample, "Sample missing 'image'."
+    assert "num_cameras" in sample, "Sample missing 'num_cameras'."
+    n_cams = sample["num_cameras"]
+    n_frames = len(cfg.datasets.vla_data.video_indices)
+    print(f"  image   : {len(sample['image'])} PILs (num_cameras={n_cams})")
+    assert len(sample["image"]) == n_cams * n_frames, (
+        f"image count {len(sample['image'])} != num_cameras*frames "
+        f"({n_cams}*{n_frames})"
+    )
     print(f"  action  : {sample['action'].shape}")
-
-    # Expected: latents [48, window_latent, H_lat, W_lat * num_cams]
-    assert (
-        latents.dim() == 4 and latents.shape[0] == 48
-    ), f"latents should be [48, T, H, W*ncams], got {tuple(latents.shape)}"
-    assert (
-        text_emb.dim() == 2 and text_emb.shape[-1] == 4096
-    ), f"text_emb should be [L, 4096], got {tuple(text_emb.shape)}"
 
     dataloader = DataLoader(
         dataset,
@@ -114,25 +114,15 @@ def main():
     ), "DiT param has no gradient — video_loss did not backprop into the world model."
     print("  DiT grad present and non-zero  ✓")
 
-    # VAE and text_encoder are None when precomputed_latents_only=True
-    # (they're not loaded into VRAM at all in that mode).
-    if model.backbone.vae is not None:
-        vae_param = next(model.backbone.vae.parameters())
-        assert (
-            vae_param.grad is None
-        ), "VAE should be frozen but received gradients."
-        print("  VAE grad None (frozen)         ✓")
-    else:
-        print("  VAE not loaded (precomputed_latents_only) ✓")
+    vae_param = next(model.backbone.vae.parameters())
+    assert vae_param.grad is None, "VAE should be frozen but received gradients."
+    print("  VAE grad None (frozen)         ✓")
 
-    if model.backbone.text_encoder is not None:
-        txt_param = next(model.backbone.text_encoder.parameters())
-        assert (
-            txt_param.grad is None
-        ), "Text encoder should be frozen but received gradients."
-        print("  Text encoder grad None (frozen) ✓")
-    else:
-        print("  Text encoder not loaded (precomputed_latents_only) ✓")
+    txt_param = next(model.backbone.text_encoder.parameters())
+    assert (
+        txt_param.grad is None
+    ), "Text encoder should be frozen but received gradients."
+    print("  Text encoder grad None (frozen) ✓")
 
     # ------------------------------------------------------------------
     # 4. predict_action (eval-path) smoke
