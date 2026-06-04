@@ -70,9 +70,11 @@ class WanGR00TDefaultConfig:
             # 0.0 = action-only (default); >0 enables co-training the DiT with
             # a flow-matching video loss, weighted by this scalar.
             "video_loss_weight": 0.0,
-            # DiT denoising steps at inference (future imagination). 1 = single
-            # forward at σ=1 (faithful, cheapest); >1 = progressive denoise.
-            "video_inference_steps": 1,
+            # K: DiT denoise steps for feature extraction (imagine-then-act).
+            # Same in train & eval. 1 = single forward; >1 = progressive denoise.
+            "feature_denoise_steps": 1,
+            # Which denoise step's features feed the action head (-1 = final).
+            "feature_capture_step": -1,
         }
     )
 
