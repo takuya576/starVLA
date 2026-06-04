@@ -34,7 +34,7 @@ def main():
         type=str,
         default="examples/LIBERO/train_files/starvla_cotrain_libero.yaml",
     )
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=2)  # >1 catches broadcast bugs
     args = parser.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)

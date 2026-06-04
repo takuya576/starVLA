@@ -328,8 +328,8 @@ class _Wan2_Interface(nn.Module):
     def _inference_timestep(self, latents, n_current_frames, future_t):
         """Per-token timestep (Wan 2.2 TI2V 2D mode): frame 0 clean, future = future_t.
 
-        future_t may be a scalar or a per-sample [B] tensor (already in the DiT
-        timestep scale ~[0, num_train_timesteps]).
+        future_t is a [B] per-sample tensor in the DiT timestep scale
+        ~[0, num_train_timesteps].
         """
         B, C, T, H, W = latents.shape
         p_t, p_h, p_w = self.transformer.config.patch_size
@@ -341,10 +341,9 @@ class _Wan2_Interface(nn.Module):
             f"(T_lat={T}, H_lat={H}, W_lat={W}, patch={p_t},{p_h},{p_w})"
         )
         device, dtype = latents.device, self.transformer.dtype
-        if not torch.is_tensor(future_t):
-            future_t = torch.full((B,), float(future_t), device=device, dtype=dtype)
-        else:
-            future_t = future_t.to(device, dtype).reshape(B)
+        # future_t is a [B] per-sample timestep (callers normalize: extract_features
+        # broadcasts its per-step scalar; video_loss already has per-sample t).
+        future_t = future_t.to(device, dtype).reshape(B)
         n_cur_p = max(1, n_current_frames // p_t)
         t_bf = future_t[:, None].expand(B, T_p).clone()  # [B, T_p]
         t_bf[:, :n_cur_p] = 0.0  # current frame(s) clean
@@ -419,7 +418,9 @@ class _Wan2_Interface(nn.Module):
 
         captured = None
         for i, t in enumerate(timesteps):
-            ts = self._inference_timestep(latents, T_cur, t)
+            # per-step σ applies to all samples → broadcast t to [B] inline
+            # (keep `t` scalar for scheduler.step below)
+            ts = self._inference_timestep(latents, T_cur, t.reshape(1).expand(B))
             hidden, vel = self._dit_forward(latents, ts, text_embeds)
             captured = hidden
             if i == cap:
