@@ -91,8 +91,8 @@ class _CosmoPredict2_Interface(nn.Module):
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         # Freeze VAE and text encoder by default
-        self.vae.requires_grad_(False)
-        self.text_encoder.requires_grad_(False)
+        # self.vae.requires_grad_(False)
+        # self.text_encoder.requires_grad_(False)
 
         # Expose config compatible with framework expectations
         # DiT: 16 heads × 128 dim = 2048
