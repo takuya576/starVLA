@@ -11,7 +11,7 @@ framework:
   world_model:
     base_wm: ./playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers
     video_loss_weight: 0.1              # >0 enables flow-matching video co-training
-    feature_denoise_steps: 1            # K: DiT denoise steps for feature extraction (train+eval)
+    feature_denoise_steps: 4            # K: DiT denoise steps for feature extraction (train+eval)
     feature_capture_step: -1            # which denoise step's features feed the action head
     vae_height: 224                   # live VAE encode res (224 fits 16-frame/2-cam seq_len)
     vae_width: 224
@@ -71,8 +71,8 @@ trainer:
     vlm: 0.1
   lora:
     enable: false
-    rank: 128
-    alpha: 128
+    rank: 16
+    alpha: 32
     dropout: 0.05
     target_modules: "all-linear"
     bias: "none"
