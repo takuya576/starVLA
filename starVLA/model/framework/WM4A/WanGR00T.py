@@ -70,6 +70,9 @@ class WanGR00TDefaultConfig:
             # 0.0 = action-only (default); >0 enables co-training the DiT with
             # a flow-matching video loss, weighted by this scalar.
             "video_loss_weight": 0.0,
+            # DiT denoising steps at inference (future imagination). 1 = single
+            # forward at σ=1 (faithful, cheapest); >1 = progressive denoise.
+            "video_inference_steps": 1,
         }
     )
 
@@ -173,27 +176,19 @@ class Wan_GR00T(baseframework):
             self.config.framework.world_model.get("video_loss_weight", 0.0)
         )
 
-        # Step 1: World model input encoding (live VAE + UMT5)
+        # Step 1+2: imagine the future (no_grad) → features, + video loss (gt_future)
         batch_images = [example["image"] for example in examples]
         instructions = [example["lang"] for example in examples]
         num_cameras = examples[0]["num_cameras"]
-        wm_inputs = self.backbone.build_inputs(
+        wm_outputs = self.backbone(
             images=batch_images,
             instructions=instructions,
-            noise_mode=video_loss_weight > 0,
             num_cameras=num_cameras,
+            gt_future=video_loss_weight > 0,
         )
-
-        # Step 2: DiT forward to extract spatiotemporal features
+        # hidden_states[-1]: [B, N_tokens, hidden_dim=3072] (detached features)
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            wm_outputs = self.backbone(
-                **wm_inputs,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # hidden_states[-1]: [B, N_tokens, hidden_dim=3072]
-            last_hidden = wm_outputs.hidden_states[-1]
-            last_hidden = self.wm_projector(last_hidden)
+            last_hidden = self.wm_projector(wm_outputs["hidden_states"][-1])
 
         # Step 3: Action head forward and loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -232,8 +227,8 @@ class Wan_GR00T(baseframework):
             )
 
         out = {"action_loss": action_loss}
-        if wm_outputs.loss is not None:
-            out["video_loss"] = video_loss_weight * wm_outputs.loss
+        if wm_outputs["loss"] is not None:
+            out["video_loss"] = video_loss_weight * wm_outputs["loss"]
         return out
 
     def _prepare_inputs(self, examples: List[dict]):
@@ -265,23 +260,18 @@ class Wan_GR00T(baseframework):
         if type(examples) is not list:
             examples = [examples]
 
-        # Live VAE + UMT5 encoding from raw frames.
+        # Imagine the future from the current frame(s) → features (same path as
+        # training, gt_future=False so no video loss).
         batch_images, instructions, state = self._prepare_inputs(examples)
         num_cameras = examples[0]["num_cameras"]
-        wm_inputs = self.backbone.build_inputs(
+        wm_outputs = self.backbone(
             images=batch_images,
             instructions=instructions,
             num_cameras=num_cameras,
+            gt_future=False,
         )
-
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            wm_outputs = self.backbone(
-                **wm_inputs,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            last_hidden = wm_outputs.hidden_states[-1]
-            last_hidden = self.wm_projector(last_hidden)
+            last_hidden = self.wm_projector(wm_outputs["hidden_states"][-1])
 
         state = (
             torch.from_numpy(np.array(state)).to(

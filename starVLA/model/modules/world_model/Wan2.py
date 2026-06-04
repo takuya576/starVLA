@@ -303,186 +303,181 @@ class _Wan2_Interface(nn.Module):
 
         return latents
 
-    def _sample_noise_and_target(self, latents):
-        """Sample per-frame timesteps and build flow-matching noise + velocity target.
+    def _current_frames(self, images, num_cameras):
+        """Pull the current frame (frame 0 of each camera) from a camera-major clip.
 
-        Uses self.scheduler (UniPCMultistepScheduler, use_flow_sigmas=True) as the
-        source of truth for the σ grid. Mirrors lingbot-va/wan_va/train.py::_add_noise
-        in structure: one timestep per (sample, frame), broadcast across the spatial
-        tokens within that frame.
-
-        Returns:
-            noisy_latents : [B, C, T, H, W]   (1-σ)·x_0 + σ·noise
-            timestep      : [B, seq_len]      per-token float (scheduler.timesteps scale)
-            target        : [B, C, T, H, W]   FM velocity (noise - x_0)
+        Camera-major layout means camera c's block starts at index c*fpc, so
+        sample_imgs[c*fpc] is its current frame. Returns a per-sample list of
+        [cam0_f0, cam1_f0, ...] — identical structure at train (clip) and eval (1 frame).
         """
-        B, _, T, H, W = latents.shape
-        device, dtype = latents.device, latents.dtype
+        out = []
+        for sample_imgs in images:
+            if not isinstance(sample_imgs, (list, tuple)):
+                sample_imgs = [sample_imgs]
+            fpc = len(sample_imgs) // num_cameras  # frames per camera
+            out.append([sample_imgs[c * fpc] for c in range(num_cameras)])
+        return out
 
-        n_steps = len(self.scheduler.timesteps)
-        idx = torch.randint(0, n_steps, (B, T), device="cpu")
-        # Frame 0 is the image condition (Wan TI2V convention); keep it clean.
-        idx[:, 0] = n_steps - 1
-        sigmas = self.scheduler.sigmas[idx].to(device, dtype)
-        t_frame = self.scheduler.timesteps[idx].to(device, dtype)
+    def _n_latent_frames(self):
+        """Latent-frame count from the dataloader's video_indices (current + future)."""
+        vla_cfg = getattr(self.config.datasets, "vla_data", None)
+        vi = getattr(vla_cfg, "video_indices", None) if vla_cfg else None
+        n_raw = len(vi) if vi else 1
+        return (n_raw - 1) // self.vae_scale_factor_temporal + 1
 
-        s = sigmas[:, None, :, None, None]
-        noise = torch.randn_like(latents)
-        noisy_latents = (1 - s) * latents + s * noise
-        target = noise - latents
+    def _inference_timestep(self, latents, n_current_frames, future_t):
+        """Per-token timestep (Wan 2.2 TI2V 2D mode): frame 0 clean, future = future_t.
 
+        future_t may be a scalar or a per-sample [B] tensor (already in the DiT
+        timestep scale ~[0, num_train_timesteps]).
+        """
+        B, C, T, H, W = latents.shape
         p_t, p_h, p_w = self.transformer.config.patch_size
         T_p, H_p, W_p = T // p_t, H // p_h, W // p_w
-        t_patched = t_frame[:, ::p_t] if p_t > 1 else t_frame
-        t_per_token = t_patched[:, :, None, None].expand(B, T_p, H_p, W_p)
-        timestep = t_per_token.reshape(B, -1)
-        return noisy_latents, timestep, target
+        device, dtype = latents.device, self.transformer.dtype
+        if not torch.is_tensor(future_t):
+            future_t = torch.full((B,), float(future_t), device=device, dtype=dtype)
+        else:
+            future_t = future_t.to(device, dtype).reshape(B)
+        n_cur_p = max(1, n_current_frames // p_t)
+        t_bf = future_t[:, None].expand(B, T_p).clone()  # [B, T_p]
+        t_bf[:, :n_cur_p] = 0.0  # current frame(s) clean
+        t_per_token = t_bf[:, :, None, None].expand(B, T_p, H_p, W_p)
+        return t_per_token.reshape(B, -1).contiguous()
 
-    def build_inputs(
-        self,
-        images=None,
-        instructions=None,
-        *,
-        noise_mode: bool = False,
-        num_cameras: int = 1,
-        **kwargs,
-    ):
-        """Build inputs for the Wan DiT world model.
+    def _dit_forward(self, latents, timestep, text_embeds):
+        """Single DiT forward + block-hook feature collection.
 
-        Encoding pipeline:
-        1. Text → UMT5 → text embeddings [B, L, 4096]
-        2. Image → VAE → latents [B, 48, T, H', W'] (DiT input)
-
-        Note: No CLIP image conditioning — this diffusers variant uses
-        expand_timesteps mode (per-token timesteps) instead.
-
-        Args:
-            noise_mode: If True, inject flow-matching noise (training co-train path).
-                If False (default), feed clean latents at timestep=0 (inference / legacy).
-
-        Returns:
-            dict with keys matching forward() expectations
+        Returns (hidden_states_tuple, velocity). Block hooks (from _register_hooks)
+        fire on self.transformer regardless of caller, so feature capture works the
+        same for the feature and video-loss paths.
         """
-        assert images is not None and instructions is not None
-        assert len(images) == len(instructions)
-        text_embeds = self._encode_text(instructions)
-        latents = self._encode_cameras(images, num_cameras=num_cameras)
-
-        p_t, p_h, p_w = self.transformer.config.patch_size
-        _, _, T, H, W = latents.shape
-        seq_len = (T // p_t) * (H // p_h) * (W // p_w)
-        assert seq_len <= 1024, (
-            f"seq_len={seq_len} exceeds WanTransformer3D rope_max_seq_len=1024. "
-            f"Reduce num_frames or image resolution. "
-            f"(T_lat={T}, H_lat={H}, W_lat={W}, patch={p_t},{p_h},{p_w})"
-        )
-
-        if noise_mode:
-            noisy_latents, timestep, target = self._sample_noise_and_target(
-                latents
-            )
-            return {
-                "hidden_states": noisy_latents,
-                "timestep": timestep,
-                "encoder_hidden_states": text_embeds,
-                "_target": target,
-                "_is_wm_input": True,
-            }
-
-        batch_size = latents.shape[0]
-        device = latents.device
-        timestep = torch.zeros(
-            batch_size, seq_len, device=device, dtype=torch.long
-        )
-        return {
-            "hidden_states": latents,
-            "timestep": timestep,
-            "encoder_hidden_states": text_embeds,
-            "_is_wm_input": True,
-        }
-
-    def forward(self, **kwargs):
-        """Forward pass through the Wan DiT transformer.
-
-        Runs a single-step forward to extract rich spatiotemporal features.
-        When `_target` is supplied (cotrain path), also computes a flow-matching
-        video loss against the DiT's velocity prediction.
-        Returns an output object with .hidden_states (and optional .loss).
-        """
-        kwargs.pop(
-            "_is_wm_input", False
-        )  # pop internal routing flags from kwargs to avoid passing them downstream
-        kwargs.pop("output_hidden_states", False)
-        kwargs.pop("return_dict", True)
-        kwargs.pop("output_attentions", None)
-        target = kwargs.pop("_target", None)
-
         self._intermediate_features.clear()
-
         with torch.autocast("cuda", dtype=torch.bfloat16):
             dit_output = self.transformer(
-                hidden_states=kwargs["hidden_states"],
-                timestep=kwargs["timestep"],
-                encoder_hidden_states=kwargs["encoder_hidden_states"],
+                hidden_states=latents,
+                timestep=timestep,
+                encoder_hidden_states=text_embeds,
             )
+        velocity = (
+            dit_output.sample if hasattr(dit_output, "sample") else dit_output
+        )
+        if isinstance(velocity, tuple):
+            velocity = velocity[0]
 
-        # Collect features from hooks
-        # WanTransformer3DModel blocks output [B, seq_len, hidden_dim] (already flattened)
         extracted = []
         for feat in self._intermediate_features:
-            if feat.dim() == 5:
-                # [B, C, T, H, W] -> [B, T*H*W, C]
+            if feat.dim() == 5:  # [B, C, T, H, W] -> [B, T*H*W, C]
                 B, C, T, H, W = feat.shape
                 feat = feat.permute(0, 2, 3, 4, 1).reshape(B, T * H * W, C)
             extracted.append(feat)
-
-        # Fallback: use transformer output directly
         if not extracted:
-            out = (
-                dit_output.sample
-                if hasattr(dit_output, "sample")
-                else dit_output
+            # Fail fast: a misconfigured extract_layers means no hook fired. The
+            # velocity (48-dim latent) is the wrong dimension for the action head's
+            # projector (expects hidden_dim), so don't fabricate a bogus feature.
+            raise RuntimeError(
+                "No DiT hidden captured — check extract_layers is a valid block "
+                f"index (got {self._extract_layers}, transformer has "
+                f"{len(self.transformer.blocks)} blocks)."
             )
-            if isinstance(out, tuple):
-                out = out[0]
-            if out.dim() == 5:
-                B, C, T, H, W = out.shape
-                out = out.permute(0, 2, 3, 4, 1).reshape(B, T * H * W, C)
-            extracted.append(out)
+        return tuple(extracted), velocity
 
-        # Flow-matching video loss (cotrain path; only computed when `_target` was passed)
-        video_loss = None
-        if target is not None:
-            pred = (
-                dit_output.sample
-                if hasattr(dit_output, "sample")
-                else dit_output
+    @torch.no_grad()
+    def _extract_features(
+        self, images, instructions, num_cameras, n_latent_frames, num_steps, capture_step
+    ):
+        """Imagine the future (no_grad) and capture DiT features for the action head.
+
+        Anchors on the current frame (clean), fills the future with noise, denoises
+        `num_steps` steps (frame 0 re-clamped each step), and returns the detached
+        features captured at `capture_step` (-1 = final). Identical at train & eval.
+        """
+        text_embeds = self._encode_text(instructions)
+        cur = self._encode_cameras(
+            self._current_frames(images, num_cameras), num_cameras=num_cameras
+        )
+        B, C, T_cur, H, W = cur.shape
+        n_future = max(0, n_latent_frames - T_cur)
+        if n_future > 0:
+            noise = torch.randn(
+                B, C, n_future, H, W, device=cur.device, dtype=cur.dtype
             )
-            if isinstance(pred, tuple):
-                pred = pred[0]
-            # TODO(human): compute the flow-matching video loss between `pred`
-            # and `target`. Both are [B, C, T, H, W] velocity tensors (pred may
-            # be bf16; cast to float32 before reducing for numerical stability).
-            # A mean-reduced MSE is a reasonable starting point; lingbot-va uses
-            # frame-wise normalization with SNR weighting as a richer alternative.
-            #
-            # Frame 0 is the clean image condition (σ ≈ 0). Its target velocity
-            # is independent random noise, which the model can't predict from a
-            # clean input — so its loss contribution is a constant noise floor,
-            # not a learning signal. Mask it out to avoid diluting the gradient.
-            frame_mask = torch.ones_like(target)
-            frame_mask[:, :, 0] = 0.0
-            sq_err = (pred.float() - target.float().detach()) ** 2
-            video_loss = (
-                sq_err * frame_mask
-            ).sum() / frame_mask.sum().clamp_min(1.0)
+            latents = torch.cat([cur, noise], dim=2)
+        else:
+            latents = cur
 
-        class _WMOutput:
-            def __init__(self, hidden_states_tuple, loss=None):
-                self.hidden_states = hidden_states_tuple
-                self.loss = loss  # TODO if you want to add loss for image reconstruction or other auxiliary objectives, you can include it here and return it in the forward pass
+        self.scheduler.set_timesteps(num_steps)
+        timesteps = self.scheduler.timesteps
+        cap = capture_step if capture_step >= 0 else len(timesteps) + capture_step
+        cap = max(0, min(cap, len(timesteps) - 1))
 
-        return _WMOutput(hidden_states_tuple=tuple(extracted), loss=video_loss)
+        captured = None
+        for i, t in enumerate(timesteps):
+            ts = self._inference_timestep(latents, T_cur, t)
+            hidden, vel = self._dit_forward(latents, ts, text_embeds)
+            captured = hidden
+            if i == cap:
+                break
+            future = self.scheduler.step(
+                vel[:, :, T_cur:], t, latents[:, :, T_cur:]
+            ).prev_sample
+            latents = torch.cat([cur, future], dim=2)  # re-clamp frame 0
+        return tuple(h.detach() for h in captured)
+
+    def _video_loss(self, images, instructions, num_cameras):
+        """Flow-matching video loss on the full clip (training only, gradient path).
+
+        Encodes the full clip (current + GT future), noises the future at a random
+        continuous t (logit-normal), and supervises the DiT's velocity on future
+        frames only. The current frame stays clean (the TI2V image condition).
+        """
+        text_embeds = self._encode_text(instructions)
+        full = self._encode_cameras(images, num_cameras=num_cameras)
+        B, C, N, H, W = full.shape
+        T_cur = 1  # latent frame 0 = current observation
+
+        t = torch.sigmoid(torch.randn(B, device=full.device, dtype=torch.float32))
+        noise = torch.randn_like(full)
+        t_b = t.view(B, 1, 1, 1, 1).to(full.dtype)
+        xt = (1 - t_b) * full + t_b * noise
+        latents = torch.cat([full[:, :, :T_cur], xt[:, :, T_cur:]], dim=2)
+
+        n_train = self.scheduler.config.num_train_timesteps
+        timestep = self._inference_timestep(latents, T_cur, t * float(n_train))
+        _, velocity = self._dit_forward(latents, timestep, text_embeds)
+
+        target = (noise - full).detach()  # flow-matching velocity
+        vel_future = velocity[:, :, T_cur:].float()
+        tgt_future = target[:, :, T_cur:].float()
+        return F.mse_loss(vel_future, tgt_future)
+
+    def forward(
+        self, images=None, instructions=None, num_cameras=1, gt_future=False, **kwargs
+    ):
+        """World-model forward (single entry, flag-selected).
+
+        Always extracts action-conditioning features (no_grad, imagined future).
+        When `gt_future=True` (training), also computes the flow-matching video
+        loss on the full clip (gradient path; trains the DiT).
+
+        Returns:
+            dict with "hidden_states" (tuple of [B, N_tokens, hidden_dim]) and
+            "loss" (video loss tensor or None).
+        """
+        wm_cfg = self.config.framework.world_model
+        num_steps = int(wm_cfg.get("feature_denoise_steps", 1))
+        capture_step = int(wm_cfg.get("feature_capture_step", -1))
+        n_latent_frames = self._n_latent_frames()
+
+        hidden = self._extract_features(
+            images, instructions, num_cameras, n_latent_frames, num_steps, capture_step
+        )
+        loss = (
+            self._video_loss(images, instructions, num_cameras)
+            if gt_future
+            else None
+        )
+        return {"hidden_states": hidden, "loss": loss}
 
     def generate(self, **kwargs):
         """Video generation using the WanPipeline.
