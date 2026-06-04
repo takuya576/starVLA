@@ -334,6 +334,12 @@ class _Wan2_Interface(nn.Module):
         B, C, T, H, W = latents.shape
         p_t, p_h, p_w = self.transformer.config.patch_size
         T_p, H_p, W_p = T // p_t, H // p_h, W // p_w
+        seq_len = T_p * H_p * W_p
+        assert seq_len <= 1024, (
+            f"seq_len={seq_len} exceeds WanTransformer3D rope_max_seq_len=1024 — "
+            f"reduce vae_height/width, video_indices length, or cameras. "
+            f"(T_lat={T}, H_lat={H}, W_lat={W}, patch={p_t},{p_h},{p_w})"
+        )
         device, dtype = latents.device, self.transformer.dtype
         if not torch.is_tensor(future_t):
             future_t = torch.full((B,), float(future_t), device=device, dtype=dtype)
