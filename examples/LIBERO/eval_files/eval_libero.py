@@ -202,7 +202,7 @@ def eval_libero(args: Args) -> None:
                 response = client_model.step(example=example_dict, step=step)
 
                 end_time = time.time()
-                print(f"time: {end_time - start_time}")
+                # print(f"time: {end_time - start_time}")
 
                 # #
                 raw_action = response["raw_action"]

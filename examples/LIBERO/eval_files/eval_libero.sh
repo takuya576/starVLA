@@ -5,7 +5,7 @@ STARVLA_DIR=/home/takuya/starVLA
 cd ${STARVLA_DIR}
 conda activate starVLA
 # === Checkpoint ===
-CKPT=${STARVLA_DIR}/results/Checkpoints/libero_all_CosmoPredict2GR00T_lora_false/final_model/libero_all_CosmoPredict2GR00T_lora_false.pt
+CKPT=${STARVLA_DIR}/results/Checkpoints/20260604_172117_libero_all_WanGR00T_lora_true/checkpoints/steps_10000_pytorch_model.pt
 
 
 ###########################################################################################
@@ -28,8 +28,8 @@ your_ckpt=${CKPT}
 # export DEBUG=true
 
 folder_name=$(echo "$your_ckpt" | awk -F'/' '{print $(NF-2)"_"$(NF-1)"_"$NF}')
-# model_root: playground/Checkpoints/<run_id>
-model_root=$(echo "$your_ckpt" | awk -F'/checkpoints/' '{print $1}')
+# model_root: <run_id> directory (parent of final_model/ or checkpoints/)
+model_root=$(dirname "$(dirname "$your_ckpt")")
 # === End of environment variable configuration ===
 ###########################################################################################
 
