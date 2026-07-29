@@ -5,6 +5,7 @@
 from typing import List, Optional
 
 import torch
+from starVLA.model.tools import has_flash_attn  # unified flash-attn detection (GPU / NPU)
 from starVLA.training.trainer_utils import initialize_overwatch
 from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
@@ -82,9 +83,7 @@ class _QWen_VL_Interface(nn.Module):
 
         # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
         if attn_implementation == "flash_attention_2":
-            try:
-                import flash_attn  # noqa: F401
-            except ImportError:
+            if not has_flash_attn():
                 print("[WARNING] flash_attn not installed, falling back to sdpa")
                 attn_implementation = "sdpa"
 
@@ -313,7 +312,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="examples/SimplerEnv/train_files/starvla_cotrain_oxe.yaml",
+        default="examples/simBenchmarks/SimplerEnv/train_files/starvla_cotrain_oxe.yaml",
         help="Path to YAML config",
     )
     args, clipargs = parser.parse_known_args()

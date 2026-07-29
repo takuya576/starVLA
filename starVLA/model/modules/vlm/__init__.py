@@ -18,6 +18,14 @@ def get_vlm_model(config):
         from .Gemma4 import _Gemma4_VL_Interface
 
         return _Gemma4_VL_Interface(config)
+    elif "molmo2" in vlm_name.lower():
+        from .Molmo2 import _Molmo2_VL_Interface
+
+        return _Molmo2_VL_Interface(config)
+    elif "minicpm-v" in vlm_name.lower() or "minicpmv" in vlm_name.lower():
+        from .MiniCPM_V import _MiniCPM_VL_Interface
+
+        return _MiniCPM_VL_Interface(config)
     elif "florence" in vlm_name.lower():  # temp for some ckpt
         from .Florence2 import _Florence_Interface
 
@@ -28,5 +36,10 @@ def get_vlm_model(config):
         from starVLA.model.modules.vlm.CosmosReason2 import _CosmosReason2_Interface
 
         return _CosmosReason2_Interface(config)
+    elif "egovla" in vlm_name.lower() or "ego_vla" in vlm_name.lower() or "vila" in vlm_name.lower():
+        # EgoVLA (VILA): SigLIP-384 + Qwen2-1.5B + mlp_downsample projector.
+        from starVLA.model.modules.vlm.VILA import _EgoVLA_VILA_Interface
+
+        return _EgoVLA_VILA_Interface(config)
     else:
         raise NotImplementedError(f"VLM model {vlm_name} not implemented")

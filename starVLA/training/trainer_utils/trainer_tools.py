@@ -19,6 +19,10 @@ from starVLA.model.tools import auto_get_trainable_modules
 logger = get_logger(__name__)
 
 
+def _dist_rank() -> int:
+    return dist.get_rank() if dist.is_initialized() else 0
+
+
 # === Define Tracker Interface ===
 #
 
@@ -226,7 +230,7 @@ class TrainerUtils:
                     continue
 
         # accelerator.wait_for_everyone()  # synchronize when distributed training
-        if dist.get_rank == 0:
+        if _dist_rank() == 0:
             print(f"🔒 Frozen modules with re pattern: {frozen}")
         return model
 
@@ -236,7 +240,7 @@ class TrainerUtils:
         print the total number of parameters and trainable parameters of the model
         :param model: PyTorch model instance
         """
-        if dist.get_rank() != 0:
+        if _dist_rank() != 0:
             return
         print("📊 model parameter statistics:")
         num_params = sum(p.numel() for p in model.parameters())
@@ -274,7 +278,7 @@ class TrainerUtils:
         """
         if not checkpoint_path:
             return []
-        if dist.get_rank() == 0:
+        if _dist_rank() == 0:
             print(f"📦 loading checkpoint: {checkpoint_path}")
         try:
             if _is_safetensors_path(checkpoint_path):
@@ -300,7 +304,7 @@ class TrainerUtils:
                     sub_state_dict = {k[len(prefix) :]: v for k, v in checkpoint.items() if k.startswith(prefix)}
                     if sub_state_dict:
                         module.load_state_dict(sub_state_dict, strict=True)
-                        if dist.get_rank() == 0:
+                        if _dist_rank() == 0:
                             print(f"✅ parameters loaded to module '{path}'")
                         loaded_modules.append(path)
                     else:
@@ -310,7 +314,7 @@ class TrainerUtils:
         else:  # full load
             try:
                 model.load_state_dict(checkpoint, strict=False)
-                if dist.get_rank() == 0:
+                if _dist_rank() == 0:
                     print("✅ loaded <full_model> model parameters")
                 loaded_modules = ["<full_model>"]
             except Exception as e:

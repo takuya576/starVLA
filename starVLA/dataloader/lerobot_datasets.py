@@ -4,20 +4,28 @@
 # Modified by [Jinhui YE/ HKUST University] in [2025].
 # Modification: [suport topdowm processing, suport param from config].
 
+import logging
 from pathlib import Path
 from typing import Sequence
+
 from omegaconf import OmegaConf
 
-from starVLA.dataloader.gr00t_lerobot.datasets import LeRobotSingleDataset, LeRobotMixtureDataset
+from starVLA.dataloader.gr00t_lerobot.datasets import (
+    LeRobotMixtureDataset,
+    LeRobotSingleDataset,
+)
 from starVLA.dataloader.gr00t_lerobot.registry import (
-    ROBOT_TYPE_CONFIG_MAP,
-    ROBOT_TYPE_TO_EMBODIMENT_TAG,
     DATASET_NAMED_MIXTURES,
+    ROBOT_TYPE_CONFIG_MAP,
     EmbodimentTag,
 )
 
+logger = logging.getLogger(__name__)
+
+
 def collate_fn(batch):
     return batch
+
 
 def make_LeRobotSingleDataset(
     data_root_dir: Path | str,
@@ -40,22 +48,44 @@ def make_LeRobotSingleDataset(
     modality_config = data_config.modality_config()
     transforms = data_config.transform()
     dataset_path = data_root_dir / data_name
-    if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
-        print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")
+    embodiment_tag = getattr(data_config, "embodiment_tag", None)
+    if embodiment_tag is None:
+        print(
+            f"Warning: DataConfig for robot_type={robot_type!r} has no embodiment_tag, using {EmbodimentTag.NEW_EMBODIMENT} as default"
+        )
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
-    else:
-        embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
 
-    video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
+    video_backend = (
+        data_cfg.get("video_backend", "decord")
+        if data_cfg
+        else "torchvision_av"
+    )
+
+    # Opt-in factory hook: a DataConfig may define ``make_dataset(dataset_name=..., **ds_kwargs)``
+    # to swap in a custom dataset class (e.g. with per-task filtering / chunk stride).
+    # When absent, fall through to the default LeRobotSingleDataset construction below.
+    if hasattr(data_config, "make_dataset"):
+        return data_config.make_dataset(
+            dataset_path=dataset_path,
+            modality_configs=modality_config,
+            transforms=transforms,
+            embodiment_tag=embodiment_tag,
+            video_backend=video_backend,
+            delete_pause_frame=delete_pause_frame,
+            data_cfg=data_cfg,
+            dataset_name=data_name,
+        )
+
     return LeRobotSingleDataset(
         dataset_path=dataset_path,
         modality_configs=modality_config,
         transforms=transforms,
         embodiment_tag=embodiment_tag,
-        video_backend=video_backend, # decord is more efficiency | torchvision_av for video.av1
+        video_backend=video_backend,  # decord is more efficiency | torchvision_av for video.av1
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
+
 
 def get_vla_dataset(
     data_cfg: dict,
@@ -72,11 +102,16 @@ def get_vla_dataset(
     data_mix = data_cfg.data_mix
     delete_pause_frame = data_cfg.get("delete_pause_frame", False)
     mixture_spec = DATASET_NAMED_MIXTURES[data_mix]
+    logger.info(
+        f"[dataloader] Using mixture '{data_mix}': {[(d, w, r) for d, w, r in mixture_spec]}"
+    )
     included_datasets, filtered_mixture_spec = set(), []
     for d_name, d_weight, robot_type in mixture_spec:
         dataset_key = (d_name, robot_type)
         if dataset_key in included_datasets:
-            print(f"Skipping Duplicate Dataset: `{(d_name, d_weight, robot_type)}`")
+            print(
+                f"Skipping Duplicate Dataset: `{(d_name, d_weight, robot_type)}`"
+            )
             continue
 
         included_datasets.add(dataset_key)
@@ -84,7 +119,18 @@ def get_vla_dataset(
 
     dataset_mixture = []
     for d_name, d_weight, robot_type in filtered_mixture_spec:
-        dataset_mixture.append((make_LeRobotSingleDataset(Path(data_root_dir), d_name, robot_type, delete_pause_frame=delete_pause_frame, data_cfg=data_cfg), d_weight))
+        dataset_mixture.append(
+            (
+                make_LeRobotSingleDataset(
+                    Path(data_root_dir),
+                    d_name,
+                    robot_type,
+                    delete_pause_frame=delete_pause_frame,
+                    data_cfg=data_cfg,
+                ),
+                d_weight,
+            )
+        )
 
     return LeRobotMixtureDataset(
         dataset_mixture,
@@ -97,7 +143,6 @@ def get_vla_dataset(
     )
 
 
-
 if __name__ == "__main__":
     import argparse
     import os
@@ -106,34 +151,45 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml",
         type=str,
-        default="./starVLA/config/training/starvla_cotrain_oxe.yaml",
+        default="./examples/simBenchmarks/LIBERO/train_files/bar/starvla_cotrain_libero.yaml",
         help="Path to YAML config",
     )
     parser.add_argument(
         "--data_mix",
         type=str,
         default=None,
-        help="Override data_mix in config (e.g. libero_goal)",
+        help="Override data_mix from config",
     )
-    args, clipargs = parser.parse_known_args()
+    parser.add_argument(
+        "--data_root_dir",
+        type=str,
+        default=None,
+        help="Override data_root_dir from config",
+    )
+    args = parser.parse_args()
 
     if os.getenv("DEBUGPY_ENABLE", "0") == "1":
         import debugpy
+
         debugpy.listen(("0.0.0.0", 10092))
         print("Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
 
     cfg = OmegaConf.load(args.config_yaml)
     vla_dataset_cfg = cfg.datasets.vla_data
-    for task_id in ["all"]:
-        vla_dataset_cfg.task_id = task_id
-        print(f"Testing Task ID: {task_id}")
-        dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
+    vla_dataset_cfg.data_root_dir = Path(vla_dataset_cfg.data_root_dir)
+    if args.data_mix is not None:
+        vla_dataset_cfg.data_mix = args.data_mix
+    if args.data_root_dir is not None:
+        vla_dataset_cfg.data_root_dir = Path(args.data_root_dir)
+
+    dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
     from torch.utils.data import DataLoader
+
     train_dataloader = DataLoader(
         dataset,
         batch_size=2,
-        num_workers=1, # For Debug
+        num_workers=1,  # For Debug
         collate_fn=collate_fn,
     )
 
@@ -142,9 +198,10 @@ if __name__ == "__main__":
     dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
 
     from tqdm import tqdm
+
     count = 0
     for batch in tqdm(train_dataloader, desc="Processing Batches"):
-        if count > 100:
+        if count > 3:
             break
         count += 1
         pass
