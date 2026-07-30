@@ -3,13 +3,13 @@ set -euo pipefail
 
 echo "$(which python)"
 
-STARVLA_DIR="${STARVLA_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+STARVLA_DIR="${STARVLA_DIR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 sim_python="${sim_python:-python}"
 SimplerEnv_PATH="${SimplerEnv_PATH:-}"
 SIMPLER_ENV_LIB_DIR="${SIMPLER_ENV_LIB_DIR:-}"
 port="${port:-6678}"
-gpu_id="${gpu_id:-0}"
-your_ckpt="${your_ckpt:-./results/Checkpoints/bridge_rt_1_qwen3_4b_gr00t/checkpoints/steps_20000_pytorch_model.pt}"
+gpu_id="${gpu_id:-1}"
+your_ckpt="${your_ckpt:-./playground/Pretrained_models/StarVLA/Qwen3VL-GR00T-Bridge-RT-1/checkpoints/steps_20000_pytorch_model.pt}"
 
 MODEL_PATH=${1:-"${your_ckpt}"}
 port=${2:-"${port}"}
