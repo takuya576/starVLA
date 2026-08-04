@@ -5,7 +5,7 @@ echo "$(which python)"
 
 STARVLA_DIR="${STARVLA_DIR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 sim_python="${sim_python:-python}"
-SimplerEnv_PATH="${SimplerEnv_PATH:-}"
+SimplerEnv_PATH="${SimplerEnv_PATH:-/data/takuya/SimplerEnv}"
 SIMPLER_ENV_LIB_DIR="${SIMPLER_ENV_LIB_DIR:-}"
 port="${port:-6678}"
 gpu_id="${gpu_id:-1}"
@@ -36,6 +36,7 @@ mkdir -p "${output_eval_dir}"
 TSET_NUM=1
 # export DEBUG=1
 
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${gpu_id}}"
 IFS=',' read -r -a CUDA_DEVICES <<< "$CUDA_VISIBLE_DEVICES"
 NUM_GPUS=${#CUDA_DEVICES[@]}
 
